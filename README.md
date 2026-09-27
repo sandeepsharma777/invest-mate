@@ -1,16 +1,32 @@
-# React + Vite
+# InvestMate
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Your unified, manual-entry investment ledger powered by **Firebase Authentication** and **Supabase (PostgreSQL with Row Level Security)**.
 
-Currently, two official plugins are available:
+## Architecture & Data Flow
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. **Authentication**: **Firebase Auth** handles user identity, account creation, and session tokens.
+2. **Database & Storage**: **Supabase (PostgreSQL)** stores all ledger data across relational tables (`holdings`, `transactions`, `income_records`, `price_alerts`, `goals`).
+3. **Third-Party Auth / JWT Bridging**: The Supabase JS client (`src/lib/supabase.js`) is configured with the `accessToken` callback and `global.headers` to attach the live Firebase Bearer token to all PostgREST queries.
+4. **Row Level Security (RLS)**: PostgreSQL policies on Supabase enforce multi-tenant data isolation using `public.firebase_uid()` matching `auth.jwt() ->> 'sub'`.
 
-## React Compiler
+## Database Schema
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- `public.holdings` — All asset positions (stocks, mutual funds, gold, fixed deposits, crypto)
+- `public.transactions` — Buy, sell, and deposit transactions for cost basis and CAGR/XIRR accounting
+- `public.income_records` — Dividend and interest income entries
+- `public.price_alerts` — Target price threshold alerts
+- `public.goals` — Financial milestones and target timelines
 
-## Expanding the Oxlint configuration
+## Local Development
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```bash
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Build for production
+npm run build
+```
+
