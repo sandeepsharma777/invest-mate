@@ -256,84 +256,90 @@ export default function RebalancingSection({ currency = "INR", onPlanUpdated }) 
         </p>
 
         <div className="diff-bars-container">
-          {data.items.map((item) => {
-            const color = PALETTE[item.asset_type] || "var(--gold-500)";
-            const isOverweight = item.status === "overweight";
-            const isUnderweight = item.status === "underweight";
+          {data.items.length === 0 ? (
+            <div style={{ padding: "var(--sp-4)", textAlign: "center", color: "var(--paper-ink-soft)", fontSize: "var(--fs-xs)" }}>
+              Add holdings to see your allocation breakdown and real-time drift comparisons.
+            </div>
+          ) : (
+            data.items.map((item) => {
+              const color = PALETTE[item.asset_type] || "var(--gold-500)";
+              const isOverweight = item.status === "overweight";
+              const isUnderweight = item.status === "underweight";
 
-            return (
-              <div key={item.asset_type} className="diff-row">
-                <div className="diff-row__head">
-                  <div className="diff-row__label">
-                    <span
+              return (
+                <div key={item.asset_type} className="diff-row">
+                  <div className="diff-row__head">
+                    <div className="diff-row__label">
+                      <span
+                        style={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: "50%",
+                          backgroundColor: color,
+                          display: "inline-block",
+                        }}
+                      />
+                      <span>{item.label}</span>
+                    </div>
+
+                    <div className="diff-row__figures">
+                      <span style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)" }}>
+                        Current: <strong className="num" style={{ color: "var(--paper-ink)" }}>{item.current_percent.toFixed(1)}%</strong> ({formatCurrency(item.current_value, currency)})
+                      </span>
+                      <span style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)" }}>
+                        Target: <strong className="num" style={{ color: "var(--paper-ink)" }}>{item.target_percent.toFixed(1)}%</strong>
+                      </span>
+
+                      <span
+                        className={`diff-pill ${
+                          isOverweight
+                            ? "diff-pill--overweight"
+                            : isUnderweight
+                            ? "diff-pill--underweight"
+                            : "diff-pill--balanced"
+                        }`}
+                      >
+                        {isOverweight ? `+${item.diff_percent.toFixed(1)}% Over` : isUnderweight ? `${item.diff_percent.toFixed(1)}% Under` : "Balanced ✓"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Progress bar with target tick */}
+                  <div className="diff-bars-track">
+                    {/* Current filled bar */}
+                    <div
+                      className="diff-bar-current"
                       style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: "50%",
+                        width: `${Math.min(100, Math.max(0, item.current_percent))}%`,
                         backgroundColor: color,
-                        display: "inline-block",
                       }}
                     />
-                    <span>{item.label}</span>
+                    {/* Target marker pin */}
+                    <div
+                      className="diff-marker-target"
+                      style={{ left: `${Math.min(100, Math.max(0, item.target_percent))}%` }}
+                      title={`Target: ${item.target_percent}%`}
+                    />
                   </div>
 
-                  <div className="diff-row__figures">
-                    <span style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)" }}>
-                      Current: <strong className="num" style={{ color: "var(--paper-ink)" }}>{item.current_percent.toFixed(1)}%</strong> ({formatCurrency(item.current_value, currency)})
+                  <div className="diff-bars-labels">
+                    <span>0%</span>
+                    <span>
+                      Action:{" "}
+                      <strong>
+                        {item.action === "buy"
+                          ? `Buy ${formatCurrency(item.suggested_amount, currency)}`
+                          : item.action === "trim"
+                          ? `Trim ${formatCurrency(item.suggested_amount, currency)}`
+                          : "Optimal weight"}
+                      </strong>
                     </span>
-                    <span style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)" }}>
-                      Target: <strong className="num" style={{ color: "var(--paper-ink)" }}>{item.target_percent.toFixed(1)}%</strong>
-                    </span>
-
-                    <span
-                      className={`diff-pill ${
-                        isOverweight
-                          ? "diff-pill--overweight"
-                          : isUnderweight
-                          ? "diff-pill--underweight"
-                          : "diff-pill--balanced"
-                      }`}
-                    >
-                      {isOverweight ? `+${item.diff_percent.toFixed(1)}% Over` : isUnderweight ? `${item.diff_percent.toFixed(1)}% Under` : "Balanced ✓"}
-                    </span>
+                    <span>100%</span>
                   </div>
                 </div>
-
-                {/* Progress bar with target tick */}
-                <div className="diff-bars-track">
-                  {/* Current filled bar */}
-                  <div
-                    className="diff-bar-current"
-                    style={{
-                      width: `${Math.min(100, Math.max(0, item.current_percent))}%`,
-                      backgroundColor: color,
-                    }}
-                  />
-                  {/* Target marker pin */}
-                  <div
-                    className="diff-marker-target"
-                    style={{ left: `${Math.min(100, Math.max(0, item.target_percent))}%` }}
-                    title={`Target: ${item.target_percent}%`}
-                  />
-                </div>
-
-                <div className="diff-bars-labels">
-                  <span>0%</span>
-                  <span>
-                    Action:{" "}
-                    <strong>
-                      {item.action === "buy"
-                        ? `Buy ${formatCurrency(item.suggested_amount, currency)}`
-                        : item.action === "trim"
-                        ? `Trim ${formatCurrency(item.suggested_amount, currency)}`
-                        : "Optimal weight"}
-                    </strong>
-                  </span>
-                  <span>100%</span>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 

@@ -2,11 +2,11 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { seedDemoData } from "../lib/db";
+import { formatFirebaseAuthError } from "../lib/firebase";
 import "../styles/auth.css";
 
 export default function Login() {
-  const { login, signup: signupFn } = useAuth();
+  const { login } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -14,7 +14,6 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
 
   function validate() {
     const e = {};
@@ -32,34 +31,9 @@ export default function Login() {
       await login({ email: email.trim(), password });
       navigate("/dashboard");
     } catch (err) {
-      toast(err.message || "Couldn't log in. Try again.", "error");
+      toast(formatFirebaseAuthError(err), "error");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleDemo() {
-    setDemoLoading(true);
-    const demoEmail = "demo@investmate.app";
-    const demoPassword = "demo123";
-    try {
-      let user;
-      try {
-        user = await login({ email: demoEmail, password: demoPassword });
-      } catch {
-        user = await signupFn({
-          name: "Asha Verma",
-          email: demoEmail,
-          password: demoPassword,
-          currency: "INR",
-          tracked_asset_types: ["stocks", "mutual_fund", "gold", "fixed_deposit", "crypto"],
-        });
-        await seedDemoData(user.id);
-      }
-      navigate("/dashboard");
-    } catch (err) {
-      toast(err.message || "Couldn't start demo.", "error");
-      setDemoLoading(false);
     }
   }
 
@@ -74,14 +48,22 @@ export default function Login() {
           <p className="auth-aside__quote">
             Every rupee you've put to work, <span>in one ledger.</span>
           </p>
-          <div className="ledger-preview" style={{ marginTop: 32 }}>
-            <div className="ledger-preview__row"><span className="seal seal--stocks"><i className="seal__dot" />Stocks</span><span className="num">₹4,32,150</span></div>
-            <div className="ledger-preview__row"><span className="seal seal--mutual_fund"><i className="seal__dot" />Mutual Funds</span><span className="num">₹2,18,940</span></div>
-            <div className="ledger-preview__row"><span className="seal seal--gold"><i className="seal__dot" />Gold</span><span className="num">₹86,160</span></div>
-            <div className="ledger-preview__row"><span className="seal seal--fixed_deposit"><i className="seal__dot" />Fixed Deposit</span><span className="num">₹2,68,750</span></div>
-            <div className="ledger-preview__total">
-              <span>Portfolio value</span>
-              <b className="num">₹10,06,000</b>
+          <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--ink-200)", fontSize: "var(--fs-sm)" }}>
+              <span style={{ color: "var(--gold-400)", fontSize: 16 }}>✓</span>
+              <span>Unified tracking across stocks, mutual funds, gold, FDs &amp; crypto</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--ink-200)", fontSize: "var(--fs-sm)" }}>
+              <span style={{ color: "var(--gold-400)", fontSize: 16 }}>✓</span>
+              <span>Cashflow-accurate XIRR, CAGR &amp; dividend accounting</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--ink-200)", fontSize: "var(--fs-sm)" }}>
+              <span style={{ color: "var(--gold-400)", fontSize: 16 }}>✓</span>
+              <span>Target asset allocation &amp; goal trajectory forecasting</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--ink-200)", fontSize: "var(--fs-sm)" }}>
+              <span style={{ color: "var(--gold-400)", fontSize: 16 }}>✓</span>
+              <span>100% private — your ledger data remains completely yours</span>
             </div>
           </div>
         </div>
@@ -128,15 +110,6 @@ export default function Login() {
               {loading ? "Logging in…" : "Log in"}
             </button>
           </form>
-
-          <div className="auth-divider">or</div>
-
-          <button className="btn btn--ghost btn--block" type="button" onClick={handleDemo} disabled={demoLoading}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/>
-            </svg>
-            {demoLoading ? "Preparing demo…" : "Explore with demo data"}
-          </button>
 
           <p className="auth-foot">New to InvestMate? <Link to="/signup">Create an account</Link></p>
         </div>

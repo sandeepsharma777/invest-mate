@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { ASSET_TYPES } from "../lib/db";
+import { formatFirebaseAuthError } from "../lib/firebase";
 import "../styles/auth.css";
 
 const ASSET_ICONS = {
@@ -77,7 +78,7 @@ export default function Signup() {
       toast("Account created — welcome to InvestMate!", "success");
       navigate("/dashboard");
     } catch (err) {
-      toast(err.message || "Couldn't create your account.", "error");
+      toast(formatFirebaseAuthError(err), "error");
       setSubmitting(false);
     }
   }
@@ -125,7 +126,7 @@ export default function Signup() {
               <div className="field-row">
                 <div className={`field${errors.name ? " has-error" : ""}`} id="field-name">
                   <label className="field__label" htmlFor="name">Full name</label>
-                  <input className="input" type="text" id="name" placeholder="Asha Verma" autoComplete="name"
+                  <input className="input" type="text" id="name" placeholder="Rahul Sharma" autoComplete="name"
                     value={fields.name} onChange={(e) => set("name", e.target.value)} />
                   <p className="field__error">Enter your name.</p>
                 </div>

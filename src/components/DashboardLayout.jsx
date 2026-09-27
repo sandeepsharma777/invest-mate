@@ -129,7 +129,9 @@ export default function DashboardLayout({ children }) {
           </div>
         </aside>
 
-        <main className="main">{children}</main>
+        <main className="main">
+          {children}
+        </main>
       </div>
     </>
   );

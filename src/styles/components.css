@@ -284,7 +284,7 @@
 .text-negative { color: var(--oxblood-600); }
 .text-muted { color: var(--paper-ink-soft); }
 
-.row-actions { display: flex; gap: var(--sp-1); justify-content: flex-end; }
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
 
 /* ---- Table toolbar (search + filters) ---- */
 .table-toolbar {

@@ -13,12 +13,6 @@ import AlertsBanner from "../components/AlertsBanner";
 import AlertsModal from "../components/AlertsModal";
 import "../styles/dashboard.css";
 
-const BELL_SVG = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
-  </svg>
-);
-
 export default function Dashboard() {
   const { user } = useAuth();
   const toast = useToast();
@@ -101,17 +95,6 @@ export default function Dashboard() {
           <p className="topbar__sub">Everything you hold, valued as of your last manual update.</p>
         </div>
         <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
-          <button
-            type="button"
-            className="topbar-alert-btn"
-            title="Manage Price Alerts"
-            onClick={() => handleOpenManageAlerts()}
-          >
-            {BELL_SVG}
-            {triggeredAlerts.length > 0 && (
-              <span className="topbar-alert-btn__badge">{triggeredAlerts.length}</span>
-            )}
-          </button>
           <Link className="btn btn--primary" to="/holdings?add=1">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
             Add investment

@@ -1,14 +1,12 @@
 /**
  * InvestMate — Data Layer (db.js)
- * Same schema, same localStorage keys, same async API as the original.
- * Every other module imports from this file rather than touching storage directly.
+ * Powered by Supabase (PostgreSQL with Row Level Security) and Firebase Auth JWT Bridging.
+ * Preserves identical asynchronous interfaces for seamless component integration.
  */
 
+import { supabase } from "./supabase.js";
+import { auth as firebaseAuth } from "./firebase.js";
 import { calculateXIRR, calculateCAGR } from "./utils.js";
-
-const DB_KEY = "investmate_db_v1";
-const SESSION_KEY = "investmate_session_v1";
-const SIM_LATENCY_MS = 120;
 
 export const ASSET_TYPES = {
   stocks: {
@@ -74,30 +72,20 @@ export const ASSET_TYPES = {
   },
 };
 
-// ── Low-level helpers ──────────────────────────────────────────────────────
-
-function readDB() {
-  const raw = localStorage.getItem(DB_KEY);
-  if (!raw) {
-    const seed = { users: [], investments: [], transactions: [], _seq: { users: 0, investments: 0, transactions: 0 } };
-    localStorage.setItem(DB_KEY, JSON.stringify(seed));
-    return seed;
+export class ApiError extends Error {
+  constructor(code, message, details = null) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.details = details;
   }
-  const parsed = JSON.parse(raw);
-  return migrateDB(parsed);
 }
 
-function writeDB(db) {
-  localStorage.setItem(DB_KEY, JSON.stringify(db));
-}
+// ── Helpers ──────────────────────────────────────────────────────────────
 
-function nextId(db, table) {
-  db._seq[table] = (db._seq[table] || 0) + 1;
-  return `${table.slice(0, 3)}_${db._seq[table]}`;
-}
-
-function delay(value) {
-  return new Promise((resolve) => setTimeout(() => resolve(value), SIM_LATENCY_MS));
+function generateId(prefix = "id") {
+  const rand = Math.random().toString(36).substring(2, 10);
+  return `${prefix}_${Date.now().toString(36)}_${rand}`;
 }
 
 function nowISO() {
@@ -108,470 +96,121 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function migrateDB(db) {
-  let modified = false;
-  if (!db) return db;
-  if (!Array.isArray(db.investments)) db.investments = [];
-  if (!Array.isArray(db.goals)) { db.goals = []; modified = true; }
-  if (!Array.isArray(db.alerts)) { db.alerts = []; modified = true; }
-  if (!db._seq) db._seq = { users: 0, investments: 0, transactions: 0, income: 0, goals: 0, alerts: 0 };
-  if (db._seq.transactions === undefined) db._seq.transactions = 0;
-  if (db._seq.income === undefined) db._seq.income = 0;
-  if (db._seq.goals === undefined) db._seq.goals = 0;
-  if (db._seq.alerts === undefined) db._seq.alerts = 0;
+function round2(n) {
+  return Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
+}
 
-  for (const inv of db.investments) {
-    if (!Array.isArray(inv.transactions) || inv.transactions.length === 0) {
-      inv.transactions = [];
-      const qty = Number(inv.quantity) || 1;
-      const price = Number(inv.purchase_price) || 0;
-      const fees = (Number(inv.fees_paid) || 0) + (Number(inv.taxes_paid) || 0);
-      const buyDate = inv.purchase_date || (inv.created_at ? inv.created_at.slice(0, 10) : todayISO());
+function round4(n) {
+  return Math.round((Number(n || 0) + Number.EPSILON) * 10000) / 10000;
+}
 
-      db._seq.transactions = (db._seq.transactions || 0) + 1;
-      inv.transactions.push({
-        id: `tx_${db._seq.transactions}`,
-        type: "buy",
-        date: buyDate,
-        quantity: qty,
-        pricePerUnit: price,
-        fees: fees,
-      });
+function getCurrentUserId() {
+  const user = firebaseAuth.currentUser;
+  if (!user || !user.uid) {
+    throw new ApiError("UNAUTHENTICATED", "You must be signed in to perform this action.");
+  }
+  return user.uid;
+}
 
-      if (inv.status === "sold" && inv.sold_price != null) {
-        db._seq.transactions = (db._seq.transactions || 0) + 1;
-        inv.transactions.push({
-          id: `tx_${db._seq.transactions}`,
-          type: "sell",
-          date: inv.sold_date || todayISO(),
-          quantity: qty,
-          pricePerUnit: Number(inv.sold_price),
-          fees: 0,
-        });
-      }
-      modified = true;
-    }
+/**
+ * Handle Supabase PostgREST errors with friendly user-facing messages
+ */
+function handleSupabaseError(error, contextMessage = "Database operation failed") {
+  if (!error) return;
+  console.error(`[Supabase Error] ${contextMessage}:`, error);
 
-    if (!Array.isArray(inv.income)) {
-      inv.income = [];
-      modified = true;
-    }
+  // RLS Violation / Permission denied
+  if (error.code === "42501" || error.message?.includes("row-level security policy")) {
+    throw new ApiError(
+      "PERMISSION_DENIED",
+      "Database permission denied. Your Firebase token or Postgres role may be unauthenticated.",
+      error
+    );
   }
 
-  if (modified) {
-    writeDB(db);
+  // Token expired / Auth failure
+  if (error.message?.includes("JWT") || error.code === "PGRST301" || error.status === 401) {
+    throw new ApiError(
+      "AUTH_EXPIRED",
+      "Your session token has expired. Please refresh your token or log in again.",
+      error
+    );
   }
-  return db;
-}
 
-function mockHash(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; }
-  return `h_${Math.abs(h)}`;
-}
-
-function getSession() {
-  const raw = localStorage.getItem(SESSION_KEY);
-  return raw ? JSON.parse(raw) : null;
-}
-
-function setSession(userId) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({ user_id: userId, issued_at: nowISO() }));
-}
-
-function clearSession() {
-  localStorage.removeItem(SESSION_KEY);
-}
-
-function sanitizeUser(user) {
-  if (!user) return null;
-  const { password_hash: _password_hash, ...safe } = user;
-  return safe;
-}
-
-function requireAuth(db) {
-  const session = getSession();
-  if (!session) throw new ApiError("UNAUTHENTICATED", "No active session.");
-  const user = db.users.find((u) => u.id === session.user_id);
-  if (!user) throw new ApiError("UNAUTHENTICATED", "Session user not found.");
-  return user;
-}
-
-export class ApiError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
+  // Record not found
+  if (error.code === "PGRST116") {
+    throw new ApiError("NOT_FOUND", "The requested record was not found.", error);
   }
+
+  // Generic Supabase / Network error
+  throw new ApiError(
+    error.code || "DB_ERROR",
+    error.message || `${contextMessage}. Please check your connection.`,
+    error
+  );
 }
 
-// ── AUTH ───────────────────────────────────────────────────────────────────
+function mapTransactionFromDb(tx) {
+  if (!tx) return null;
+  return {
+    id: tx.id,
+    type: tx.type,
+    date: tx.date,
+    quantity: Number(tx.quantity) || 0,
+    pricePerUnit: Number(tx.price_per_unit) || 0,
+    fees: Number(tx.fees) || 0,
+    notes: tx.notes || "",
+    created_at: tx.created_at,
+  };
+}
 
-export const auth = {
-  async signup({ name, email, password, tracked_asset_types, currency }) {
-    const db = readDB();
-    email = String(email || "").trim().toLowerCase();
-    if (!name || !email || !password) throw new ApiError("VALIDATION", "Name, email and password are required.");
-    if (password.length < 6) throw new ApiError("VALIDATION", "Password must be at least 6 characters.");
-    if (db.users.some((u) => u.email === email)) throw new ApiError("CONFLICT", "An account with this email already exists.");
+function mapIncomeFromDb(inc) {
+  if (!inc) return null;
+  return {
+    id: inc.id,
+    type: inc.type,
+    date: inc.date,
+    amount: Number(inc.amount) || 0,
+    reinvested: Boolean(inc.reinvested),
+    notes: inc.notes || "",
+    created_at: inc.created_at,
+  };
+}
 
-    const user = {
-      id: nextId(db, "users"),
-      name: name.trim(),
-      email,
-      password_hash: mockHash(password),
-      currency: currency || "INR",
-      tracked_asset_types: tracked_asset_types && tracked_asset_types.length ? tracked_asset_types : Object.keys(ASSET_TYPES).slice(0, 3),
-      created_at: nowISO(),
-    };
-    db.users.push(user);
-    writeDB(db);
-    setSession(user.id);
-    return delay(sanitizeUser(user));
-  },
+function mapHoldingFromDb(row) {
+  if (!row) return null;
 
-  async login({ email, password }) {
-    const db = readDB();
-    email = String(email || "").trim().toLowerCase();
-    const user = db.users.find((u) => u.email === email);
-    if (!user || user.password_hash !== mockHash(password)) {
-      throw new ApiError("INVALID_CREDENTIALS", "Email or password is incorrect.");
-    }
-    setSession(user.id);
-    return delay(sanitizeUser(user));
-  },
+  const rawTransactions = Array.isArray(row.transactions) ? row.transactions : [];
+  const rawIncome = Array.isArray(row.income_records) ? row.income_records : [];
 
-  async logout() {
-    clearSession();
-    return delay({ ok: true });
-  },
+  const txs = rawTransactions.map(mapTransactionFromDb);
+  const incs = rawIncome.map(mapIncomeFromDb);
 
-  async getCurrentUser() {
-    const session = getSession();
-    if (!session) return delay(null);
-    const db = readDB();
-    const user = db.users.find((u) => u.id === session.user_id);
-    return delay(sanitizeUser(user || null));
-  },
-
-  async updateTrackedAssetTypes(types) {
-    const db = readDB();
-    const user = requireAuth(db);
-    user.tracked_asset_types = types;
-    writeDB(db);
-    return delay(sanitizeUser(user));
-  },
-
-  isAuthenticated() {
-    return !!getSession();
-  },
-};
-
-// ── INVESTMENTS ────────────────────────────────────────────────────────────
-
-export const investments = {
-  async list(filters = {}) {
-    const db = readDB();
-    const user = requireAuth(db);
-    let rows = db.investments.filter((i) => i.user_id === user.id);
-
-    if (filters.asset_type && filters.asset_type !== "all") {
-      rows = rows.filter((i) => i.asset_type === filters.asset_type);
-    }
-    if (filters.status) {
-      rows = rows.filter((i) => i.status === filters.status);
-    }
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
-      rows = rows.filter((i) =>
-        i.name.toLowerCase().includes(q) ||
-        (i.identifier || "").toLowerCase().includes(q) ||
-        (i.platform || "").toLowerCase().includes(q)
-      );
-    }
-    return delay(rows.map(computeHoldingMetrics).sort((a, b) => b.created_at.localeCompare(a.created_at)));
-  },
-
-  async get(id) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
-    return delay(computeHoldingMetrics(row));
-  },
-
-  async create(payload) {
-    const db = readDB();
-    const user = requireAuth(db);
-    validateHoldingPayload(payload);
-
-    const feesPaid = Number(payload.fees_paid) || 0;
-    const taxesPaid = Number(payload.taxes_paid) || 0;
-    const qty = Number(payload.quantity);
-    const purchasePrice = Number(payload.purchase_price);
-
-    const tx = {
-      id: nextId(db, "transactions"),
-      type: "buy",
-      date: payload.purchase_date || todayISO(),
-      quantity: qty,
-      pricePerUnit: purchasePrice,
-      fees: feesPaid + taxesPaid,
-    };
-
-    const row = {
-      id: nextId(db, "investments"),
-      user_id: user.id,
-      asset_type: payload.asset_type,
-      name: payload.name.trim(),
-      identifier: payload.identifier || "",
-      unit: ASSET_TYPES[payload.asset_type]?.unitLabel || "units",
-      quantity: qty,
-      purchase_price: purchasePrice,
-      purchase_date: payload.purchase_date || todayISO(),
-      fees_paid: feesPaid,
-      taxes_paid: taxesPaid,
-      current_price: payload.current_price !== "" && payload.current_price != null ? Number(payload.current_price) : purchasePrice,
-      current_price_updated_at: nowISO(),
-      platform: payload.platform || "",
-      notes: payload.notes || "",
-      status: "active",
-      sold_price: null,
-      sold_date: null,
-      type_fields: payload.type_fields || {},
-      transactions: [tx],
-      created_at: nowISO(),
-      updated_at: nowISO(),
-    };
-    db.investments.push(row);
-    writeDB(db);
-    return delay(computeHoldingMetrics(row));
-  },
-
-  async update(id, payload) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
-    validateHoldingPayload(payload, true);
-
-    if (!Array.isArray(row.transactions)) {
-      row.transactions = [];
-    }
-
-    if (payload.fees_paid !== undefined) row.fees_paid = Number(payload.fees_paid) || 0;
-    if (payload.taxes_paid !== undefined) row.taxes_paid = Number(payload.taxes_paid) || 0;
-    if (payload.purchase_date !== undefined) row.purchase_date = payload.purchase_date;
-
-    // If holding only has 1 buy transaction and user edited quantity/price/fees/date in edit modal:
-    if (row.transactions.length === 1 && row.transactions[0].type === "buy") {
-      const initialTx = row.transactions[0];
-      if (payload.quantity != null) {
-        initialTx.quantity = Number(payload.quantity);
-        row.quantity = Number(payload.quantity);
-      }
-      if (payload.purchase_price != null) {
-        initialTx.pricePerUnit = Number(payload.purchase_price);
-        row.purchase_price = Number(payload.purchase_price);
-      }
-      if (payload.purchase_date != null) {
-        initialTx.date = payload.purchase_date;
-      }
-      if (payload.fees_paid != null || payload.taxes_paid != null) {
-        initialTx.fees = (Number(payload.fees_paid != null ? payload.fees_paid : row.fees_paid) || 0) +
-                         (Number(payload.taxes_paid != null ? payload.taxes_paid : row.taxes_paid) || 0);
-      }
-    }
-
-    Object.assign(row, {
-      asset_type: payload.asset_type ?? row.asset_type,
-      name: payload.name?.trim() ?? row.name,
-      identifier: payload.identifier ?? row.identifier,
-      unit: ASSET_TYPES[payload.asset_type ?? row.asset_type]?.unitLabel || row.unit,
-      current_price: payload.current_price != null && payload.current_price !== "" ? Number(payload.current_price) : row.current_price,
-      current_price_updated_at: payload.current_price != null ? nowISO() : row.current_price_updated_at,
-      platform: payload.platform ?? row.platform,
-      notes: payload.notes ?? row.notes,
-      type_fields: payload.type_fields ?? row.type_fields,
-      updated_at: nowISO(),
-    });
-
-    writeDB(db);
-    return delay(computeHoldingMetrics(row));
-  },
-
-  async addTransaction(id, txData) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
-
-    if (!Array.isArray(row.transactions)) {
-      row.transactions = [];
-    }
-
-    const qty = Number(txData.quantity);
-    const price = Number(txData.pricePerUnit);
-    const fees = Number(txData.fees || 0);
-
-    if (!qty || qty <= 0) throw new ApiError("VALIDATION", "Quantity must be greater than zero.");
-    if (price < 0 || Number.isNaN(price)) throw new ApiError("VALIDATION", "Price per unit cannot be negative.");
-    if (!txData.date) throw new ApiError("VALIDATION", "Transaction date is required.");
-    if (!["buy", "sell"].includes(txData.type)) throw new ApiError("VALIDATION", "Transaction type must be 'buy' or 'sell'.");
-
-    if (txData.type === "sell") {
-      const current = computeHoldingMetrics(row);
-      if (qty > current.quantity) {
-        throw new ApiError("VALIDATION", `Cannot sell ${qty} units. You currently hold ${current.quantity} units.`);
-      }
-    }
-
-    const tx = {
-      id: nextId(db, "transactions"),
-      type: txData.type,
-      date: txData.date,
-      quantity: qty,
-      pricePerUnit: price,
-      fees: fees,
-    };
-
-    row.transactions.push(tx);
-    row.updated_at = nowISO();
-
-    const updated = computeHoldingMetrics(row);
-    row.status = updated.status;
-    if (txData.type === "sell") {
-      row.sold_price = price;
-      row.sold_date = txData.date;
-    }
-
-    writeDB(db);
-    return delay(updated);
-  },
-
-  async deleteTransaction(id, txId) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
-
-    if (!Array.isArray(row.transactions)) {
-      throw new ApiError("NOT_FOUND", "Transaction not found.");
-    }
-
-    const idx = row.transactions.findIndex((t) => t.id === txId);
-    if (idx === -1) throw new ApiError("NOT_FOUND", "Transaction not found.");
-
-    row.transactions.splice(idx, 1);
-    row.updated_at = nowISO();
-
-    const updated = computeHoldingMetrics(row);
-    row.status = updated.status;
-
-    writeDB(db);
-    return delay(updated);
-  },
-
-  async markSold(id, { sold_price, sold_date, quantity, fees }) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
-
-    const current = computeHoldingMetrics(row);
-    const qtyToSell = quantity != null && Number(quantity) > 0 ? Number(quantity) : current.quantity;
-
-    if (qtyToSell <= 0) throw new ApiError("VALIDATION", "Holding has no units available to sell.");
-    if (qtyToSell > current.quantity) {
-      throw new ApiError("VALIDATION", `Cannot sell ${qtyToSell} units. You currently hold ${current.quantity} units.`);
-    }
-
-    const tx = {
-      id: nextId(db, "transactions"),
-      type: "sell",
-      date: sold_date || todayISO(),
-      quantity: qtyToSell,
-      pricePerUnit: Number(sold_price),
-      fees: Number(fees) || 0,
-    };
-
-    if (!Array.isArray(row.transactions)) {
-      row.transactions = [];
-    }
-    row.transactions.push(tx);
-    row.sold_price = Number(sold_price);
-    row.sold_date = sold_date || todayISO();
-    row.updated_at = nowISO();
-
-    const updated = computeHoldingMetrics(row);
-    row.status = updated.status;
-
-    writeDB(db);
-    return delay(updated);
-  },
-
-  async addIncome(id, { type, date, amount, notes }) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
-
-    if (!type || (type !== "dividend" && type !== "interest")) {
-      throw new ApiError("VALIDATION", "Income type must be 'dividend' or 'interest'.");
-    }
-    const amt = Number(amount);
-    if (!amt || amt <= 0) {
-      throw new ApiError("VALIDATION", "Income amount must be greater than zero.");
-    }
-
-    if (!Array.isArray(row.income)) {
-      row.income = [];
-    }
-
-    const incomeEntry = {
-      id: nextId(db, "income"),
-      type,
-      date: date || todayISO(),
-      amount: round2(amt),
-      notes: notes ? String(notes).trim() : "",
-    };
-
-    row.income.push(incomeEntry);
-    row.updated_at = nowISO();
-
-    writeDB(db);
-    return delay(computeHoldingMetrics(row));
-  },
-
-  async deleteIncome(id, incomeId) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
-
-    if (!Array.isArray(row.income)) {
-      throw new ApiError("NOT_FOUND", "Income entry not found.");
-    }
-
-    const idx = row.income.findIndex((inc) => inc.id === incomeId);
-    if (idx === -1) throw new ApiError("NOT_FOUND", "Income entry not found.");
-
-    row.income.splice(idx, 1);
-    row.updated_at = nowISO();
-
-    writeDB(db);
-    return delay(computeHoldingMetrics(row));
-  },
-
-  async remove(id) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const idx = db.investments.findIndex((i) => i.id === id && i.user_id === user.id);
-    if (idx === -1) throw new ApiError("NOT_FOUND", "Investment not found.");
-    db.investments.splice(idx, 1);
-    writeDB(db);
-    return delay({ ok: true });
-  },
-};
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    asset_type: row.asset_type,
+    name: row.name,
+    identifier: row.identifier || "",
+    unit: row.unit || ASSET_TYPES[row.asset_type]?.unitLabel || "units",
+    quantity: Number(row.quantity) || 0,
+    purchase_price: Number(row.purchase_price) || 0,
+    purchase_date: row.purchase_date,
+    current_price: Number(row.current_price) || 0,
+    fees_paid: Number(row.fees_paid) || 0,
+    taxes_paid: Number(row.taxes_paid) || 0,
+    platform: row.platform || "",
+    status: row.status || "active",
+    sold_price: row.sold_price != null ? Number(row.sold_price) : null,
+    sold_date: row.sold_date || null,
+    notes: row.notes || "",
+    type_fields: row.type_fields || {},
+    transactions: txs,
+    income: incs,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
 
 function validateHoldingPayload(p, partial = false) {
   if (!partial || p.asset_type !== undefined) {
@@ -591,15 +230,11 @@ function validateHoldingPayload(p, partial = false) {
   }
 }
 
-function round2(n) {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-function round4(n) {
-  return Math.round((n + Number.EPSILON) * 10000) / 10000;
-}
+// ── Holding Metrics Calculation ──────────────────────────────────────────
 
 export function computeHoldingMetrics(row) {
+  if (!row) return null;
+
   const txs = Array.isArray(row.transactions)
     ? [...row.transactions].sort((a, b) => (a.date || "").localeCompare(b.date || ""))
     : [];
@@ -660,7 +295,7 @@ export function computeHoldingMetrics(row) {
     else if (inc.type === "interest") totalInterest += amt;
   }
 
-  // Absolute return is unrealized return on open shares + realized gains on closed shares + income received
+  // Absolute return is unrealized return + realized gains + income received
   const unrealizedReturn = currentValue - investedAmount;
   const absoluteReturn = unrealizedReturn + totalRealizedPnl + totalIncome;
 
@@ -679,7 +314,6 @@ export function computeHoldingMetrics(row) {
       cashflows.push({ amount: +(q * p - f), date: tx.date });
     }
   }
-  // Dividends and interest count as positive cash inflows at their dates
   for (const inc of incomeEntries) {
     const amt = Number(inc.amount) || 0;
     if (amt > 0) {
@@ -692,7 +326,7 @@ export function computeHoldingMetrics(row) {
 
   const xirr = calculateXIRR(cashflows);
 
-  // Simple CAGR for holdings held over the same period, without interim buys/sells
+  // CAGR calculation
   let cagr = null;
   const buys = txs.filter((t) => t.type === "buy");
   const sells = txs.filter((t) => t.type === "sell");
@@ -729,14 +363,332 @@ export function computeHoldingMetrics(row) {
   };
 }
 
+// ── INVESTMENTS ──────────────────────────────────────────────────────────
+
+export const investments = {
+  async list(filters = {}) {
+    getCurrentUserId(); // ensures authenticated
+
+    let query = supabase
+      .from("holdings")
+      .select("*, transactions(*), income_records(*)")
+      .order("created_at", { ascending: false });
+
+    if (filters.asset_type && filters.asset_type !== "all") {
+      query = query.eq("asset_type", filters.asset_type);
+    }
+    if (filters.status) {
+      query = query.eq("status", filters.status);
+    }
+
+    const { data, error } = await query;
+    if (error) handleSupabaseError(error, "Failed to load holdings from database");
+
+    let rows = (data || []).map(mapHoldingFromDb).map(computeHoldingMetrics);
+
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      rows = rows.filter(
+        (i) =>
+          i.name.toLowerCase().includes(q) ||
+          (i.identifier || "").toLowerCase().includes(q) ||
+          (i.platform || "").toLowerCase().includes(q)
+      );
+    }
+
+    return rows.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  },
+
+  async get(id) {
+    getCurrentUserId();
+
+    const { data, error } = await supabase
+      .from("holdings")
+      .select("*, transactions(*), income_records(*)")
+      .eq("id", id)
+      .single();
+
+    if (error) handleSupabaseError(error, "Holding not found");
+    return computeHoldingMetrics(mapHoldingFromDb(data));
+  },
+
+  async create(payload) {
+    const userId = getCurrentUserId();
+    validateHoldingPayload(payload);
+
+    const holdingId = generateId("inv");
+    const txId = generateId("tx");
+    const feesPaid = Number(payload.fees_paid) || 0;
+    const taxesPaid = Number(payload.taxes_paid) || 0;
+    const qty = Number(payload.quantity);
+    const purchasePrice = Number(payload.purchase_price);
+
+    const holdingRow = {
+      id: holdingId,
+      user_id: userId,
+      asset_type: payload.asset_type,
+      name: payload.name.trim(),
+      identifier: payload.identifier || "",
+      unit: ASSET_TYPES[payload.asset_type]?.unitLabel || "units",
+      quantity: qty,
+      purchase_price: purchasePrice,
+      purchase_date: payload.purchase_date || todayISO(),
+      fees_paid: feesPaid,
+      taxes_paid: taxesPaid,
+      current_price: payload.current_price !== "" && payload.current_price != null ? Number(payload.current_price) : purchasePrice,
+      platform: payload.platform || "",
+      notes: payload.notes || "",
+      status: "active",
+      sold_price: null,
+      sold_date: null,
+      type_fields: payload.type_fields || {},
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    };
+
+    // 1. Insert Holding
+    const { error: holdingError } = await supabase
+      .from("holdings")
+      .insert(holdingRow);
+    if (holdingError) handleSupabaseError(holdingError, "Failed to create holding");
+
+    // 2. Insert Initial Buy Transaction
+    const txRow = {
+      id: txId,
+      holding_id: holdingId,
+      type: "buy",
+      date: payload.purchase_date || todayISO(),
+      quantity: qty,
+      price_per_unit: purchasePrice,
+      fees: feesPaid + taxesPaid,
+      notes: "Initial purchase",
+      created_at: nowISO(),
+    };
+
+    const { error: txError } = await supabase
+      .from("transactions")
+      .insert(txRow);
+    if (txError) handleSupabaseError(txError, "Failed to record purchase transaction");
+
+    return await investments.get(holdingId);
+  },
+
+  async update(id, payload) {
+    getCurrentUserId();
+    validateHoldingPayload(payload, true);
+
+    const holding = await investments.get(id);
+    if (!holding) throw new ApiError("NOT_FOUND", "Holding not found.");
+
+    const patch = {
+      updated_at: nowISO(),
+    };
+
+    if (payload.asset_type !== undefined) {
+      patch.asset_type = payload.asset_type;
+      patch.unit = ASSET_TYPES[payload.asset_type]?.unitLabel || holding.unit;
+    }
+    if (payload.name !== undefined) patch.name = payload.name.trim();
+    if (payload.identifier !== undefined) patch.identifier = payload.identifier;
+    if (payload.platform !== undefined) patch.platform = payload.platform;
+    if (payload.notes !== undefined) patch.notes = payload.notes;
+    if (payload.type_fields !== undefined) patch.type_fields = payload.type_fields;
+    if (payload.current_price != null && payload.current_price !== "") {
+      patch.current_price = Number(payload.current_price);
+    }
+    if (payload.fees_paid !== undefined) patch.fees_paid = Number(payload.fees_paid) || 0;
+    if (payload.taxes_paid !== undefined) patch.taxes_paid = Number(payload.taxes_paid) || 0;
+    if (payload.purchase_date !== undefined) patch.purchase_date = payload.purchase_date;
+
+    // If holding only has 1 buy transaction, update that transaction as well
+    if (holding.transactions?.length === 1 && holding.transactions[0].type === "buy") {
+      const initialTx = holding.transactions[0];
+      const txPatch = {};
+      if (payload.quantity != null) {
+        txPatch.quantity = Number(payload.quantity);
+        patch.quantity = Number(payload.quantity);
+      }
+      if (payload.purchase_price != null) {
+        txPatch.price_per_unit = Number(payload.purchase_price);
+        patch.purchase_price = Number(payload.purchase_price);
+      }
+      if (payload.purchase_date != null) {
+        txPatch.date = payload.purchase_date;
+      }
+      if (payload.fees_paid != null || payload.taxes_paid != null) {
+        txPatch.fees = (Number(payload.fees_paid != null ? payload.fees_paid : holding.fees_paid) || 0) +
+                       (Number(payload.taxes_paid != null ? payload.taxes_paid : holding.taxes_paid) || 0);
+      }
+
+      if (Object.keys(txPatch).length > 0) {
+        const { error: txErr } = await supabase
+          .from("transactions")
+          .update(txPatch)
+          .eq("id", initialTx.id);
+        if (txErr) handleSupabaseError(txErr, "Failed to update initial transaction");
+      }
+    }
+
+    const { error } = await supabase
+      .from("holdings")
+      .update(patch)
+      .eq("id", id);
+    if (error) handleSupabaseError(error, "Failed to update holding");
+
+    return await investments.get(id);
+  },
+
+  async addTransaction(id, txData) {
+    getCurrentUserId();
+    const holding = await investments.get(id);
+    if (!holding) throw new ApiError("NOT_FOUND", "Holding not found.");
+
+    const qty = Number(txData.quantity);
+    const price = Number(txData.pricePerUnit);
+    const fees = Number(txData.fees || 0);
+
+    if (!qty || qty <= 0) throw new ApiError("VALIDATION", "Quantity must be greater than zero.");
+    if (price < 0 || Number.isNaN(price)) throw new ApiError("VALIDATION", "Price per unit cannot be negative.");
+    if (!txData.date) throw new ApiError("VALIDATION", "Transaction date is required.");
+    if (!["buy", "sell"].includes(txData.type)) throw new ApiError("VALIDATION", "Transaction type must be 'buy' or 'sell'.");
+
+    if (txData.type === "sell") {
+      if (qty > holding.quantity) {
+        throw new ApiError("VALIDATION", `Cannot sell ${qty} units. You currently hold ${holding.quantity} units.`);
+      }
+    }
+
+    const txId = generateId("tx");
+    const { error: txErr } = await supabase
+      .from("transactions")
+      .insert({
+        id: txId,
+        holding_id: id,
+        type: txData.type,
+        date: txData.date,
+        quantity: qty,
+        price_per_unit: price,
+        fees: fees,
+        notes: txData.notes || "",
+        created_at: nowISO(),
+      });
+    if (txErr) handleSupabaseError(txErr, "Failed to record transaction");
+
+    // Fetch updated holding and recalculate status / sold price
+    const updated = await investments.get(id);
+    const patch = {
+      status: updated.status,
+      updated_at: nowISO(),
+    };
+    if (txData.type === "sell") {
+      patch.sold_price = price;
+      patch.sold_date = txData.date;
+    }
+
+    await supabase.from("holdings").update(patch).eq("id", id);
+    return await investments.get(id);
+  },
+
+  async deleteTransaction(holdingId, txId) {
+    getCurrentUserId();
+    const holding = await investments.get(holdingId);
+    if (!holding) throw new ApiError("NOT_FOUND", "Holding not found.");
+
+    const { error: delErr } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", txId)
+      .eq("holding_id", holdingId);
+    if (delErr) handleSupabaseError(delErr, "Failed to delete transaction");
+
+    // Recalculate status
+    const updated = await investments.get(holdingId);
+    await supabase.from("holdings").update({ status: updated.status, updated_at: nowISO() }).eq("id", holdingId);
+    return await investments.get(holdingId);
+  },
+
+  async markSold(id, { sold_price, sold_date, quantity, fees }) {
+    getCurrentUserId();
+    const holding = await investments.get(id);
+    if (!holding) throw new ApiError("NOT_FOUND", "Holding not found.");
+
+    const qtyToSell = quantity != null && Number(quantity) > 0 ? Number(quantity) : holding.quantity;
+    if (qtyToSell <= 0) throw new ApiError("VALIDATION", "Holding has no units available to sell.");
+    if (qtyToSell > holding.quantity) {
+      throw new ApiError("VALIDATION", `Cannot sell ${qtyToSell} units. You currently hold ${holding.quantity} units.`);
+    }
+
+    return await investments.addTransaction(id, {
+      type: "sell",
+      quantity: qtyToSell,
+      pricePerUnit: Number(sold_price),
+      date: sold_date || todayISO(),
+      fees: Number(fees) || 0,
+    });
+  },
+
+  async addIncome(id, { type, date, amount, notes }) {
+    getCurrentUserId();
+    const holding = await investments.get(id);
+    if (!holding) throw new ApiError("NOT_FOUND", "Holding not found.");
+
+    if (!type || (type !== "dividend" && type !== "interest")) {
+      throw new ApiError("VALIDATION", "Income type must be 'dividend' or 'interest'.");
+    }
+    const amt = Number(amount);
+    if (!amt || amt <= 0) {
+      throw new ApiError("VALIDATION", "Income amount must be greater than zero.");
+    }
+
+    const incomeId = generateId("inc");
+    const { error: incErr } = await supabase
+      .from("income_records")
+      .insert({
+        id: incomeId,
+        holding_id: id,
+        type,
+        date: date || todayISO(),
+        amount: round2(amt),
+        reinvested: false,
+        notes: notes ? String(notes).trim() : "",
+        created_at: nowISO(),
+      });
+    if (incErr) handleSupabaseError(incErr, "Failed to record income entry");
+
+    await supabase.from("holdings").update({ updated_at: nowISO() }).eq("id", id);
+    return await investments.get(id);
+  },
+
+  async deleteIncome(holdingId, incomeId) {
+    getCurrentUserId();
+    const { error: delErr } = await supabase
+      .from("income_records")
+      .delete()
+      .eq("id", incomeId)
+      .eq("holding_id", holdingId);
+    if (delErr) handleSupabaseError(delErr, "Failed to delete income entry");
+
+    await supabase.from("holdings").update({ updated_at: nowISO() }).eq("id", holdingId);
+    return await investments.get(holdingId);
+  },
+
+  async remove(id) {
+    getCurrentUserId();
+    const { error } = await supabase
+      .from("holdings")
+      .delete()
+      .eq("id", id);
+    if (error) handleSupabaseError(error, "Failed to delete holding");
+    return { ok: true };
+  },
+};
+
 // ── ANALYTICS ─────────────────────────────────────────────────────────────
 
 export const analytics = {
   async getSummary() {
-    const db = readDB();
-    const user = requireAuth(db);
-    const activeRows = await investments.list({ status: "active" });
-    const allUserHoldings = db.investments.filter((i) => i.user_id === user.id);
+    const allRows = await investments.list();
+    const activeRows = allRows.filter((r) => r.status === "active");
 
     const totals = activeRows.reduce(
       (acc, r) => {
@@ -754,8 +706,7 @@ export const analytics = {
     let totalInterest = 0;
     let combinedAbsoluteReturn = 0;
 
-    for (const h of allUserHoldings) {
-      const hm = computeHoldingMetrics(h);
+    for (const hm of allRows) {
       totalFees += hm.fees_paid || 0;
       totalTaxes += hm.taxes_paid || 0;
       totalIncome += hm.total_income || 0;
@@ -766,7 +717,7 @@ export const analytics = {
 
     // Build portfolio cashflows across all holdings
     const portfolioCashflows = [];
-    for (const h of allUserHoldings) {
+    for (const h of allRows) {
       const txs = Array.isArray(h.transactions) ? h.transactions : [];
       for (const tx of txs) {
         const q = Number(tx.quantity) || 0;
@@ -793,7 +744,7 @@ export const analytics = {
     const portfolioXirr = calculateXIRR(portfolioCashflows);
     const percentReturn = totals.invested > 0 ? (combinedAbsoluteReturn / totals.invested) * 100 : 0;
 
-    return delay({
+    return {
       total_invested: round2(totals.invested),
       total_current_value: round2(totals.current),
       absolute_return: round2(combinedAbsoluteReturn),
@@ -805,7 +756,7 @@ export const analytics = {
       total_dividends: round2(totalDividends),
       total_interest: round2(totalInterest),
       holdings_count: activeRows.length,
-    });
+    };
   },
 
   async getAllocation() {
@@ -815,57 +766,62 @@ export const analytics = {
       byType[r.asset_type] = (byType[r.asset_type] || 0) + r.current_value;
     });
     const total = Object.values(byType).reduce((a, b) => a + b, 0);
-    return delay(
-      Object.entries(byType)
-        .map(([asset_type, value]) => ({
-          asset_type,
-          label: ASSET_TYPES[asset_type]?.label || asset_type,
-          value: round2(value),
-          percent: total > 0 ? round2((value / total) * 100) : 0,
-        }))
-        .sort((a, b) => b.value - a.value)
-    );
+    return Object.entries(byType)
+      .map(([asset_type, value]) => ({
+        asset_type,
+        label: ASSET_TYPES[asset_type]?.label || asset_type,
+        value: round2(value),
+        percent: total > 0 ? round2((value / total) * 100) : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
   },
 
   async getReturnsByAsset() {
     const rows = await investments.list({ status: "active" });
     const byType = {};
     rows.forEach((r) => {
-      if (!byType[r.asset_type]) byType[r.asset_type] = { asset_type: r.asset_type, label: ASSET_TYPES[r.asset_type]?.label || r.asset_type, invested: 0, current: 0 };
+      if (!byType[r.asset_type]) {
+        byType[r.asset_type] = { asset_type: r.asset_type, label: ASSET_TYPES[r.asset_type]?.label || r.asset_type, invested: 0, current: 0 };
+      }
       byType[r.asset_type].invested += r.invested_amount;
       byType[r.asset_type].current += r.current_value;
     });
-    return delay(
-      Object.values(byType).map((t) => ({
-        ...t,
-        invested: round2(t.invested),
-        current: round2(t.current),
-        absolute_return: round2(t.current - t.invested),
-        percent_return: t.invested > 0 ? round2(((t.current - t.invested) / t.invested) * 100) : 0,
-      }))
-    );
+    return Object.values(byType).map((t) => ({
+      ...t,
+      invested: round2(t.invested),
+      current: round2(t.current),
+      absolute_return: round2(t.current - t.invested),
+      percent_return: t.invested > 0 ? round2(((t.current - t.invested) / t.invested) * 100) : 0,
+    }));
   },
 
   async getTopMovers(limit = 5) {
     const rows = await investments.list({ status: "active" });
     const sorted = [...rows].sort((a, b) => b.percent_return - a.percent_return);
-    return delay({
+    return {
       gainers: sorted.filter((r) => r.percent_return > 0).slice(0, limit),
       losers: sorted.filter((r) => r.percent_return < 0).slice(-limit).reverse(),
-    });
+    };
   },
 
   async getTargetAllocation() {
-    const db = readDB();
-    const user = requireAuth(db);
+    const userId = getCurrentUserId();
     const rows = await investments.list({ status: "active" });
     const activeTypes = Array.from(new Set(rows.map((r) => r.asset_type)));
 
-    if (user.target_allocation && typeof user.target_allocation === "object" && Object.keys(user.target_allocation).length > 0) {
-      return delay({ ...user.target_allocation });
+    // Load custom allocation from local preferences (or default)
+    try {
+      const saved = localStorage.getItem(`investmate_target_alloc_${userId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // fallback to default
     }
 
-    // Sensible default based on holdings or tracked types
     const defaultMap = {};
     if (activeTypes.includes("stocks") && activeTypes.includes("mutual_fund")) {
       defaultMap["stocks"] = 40;
@@ -888,13 +844,11 @@ export const analytics = {
       defaultMap["gold"] = 15;
       defaultMap["fixed_deposit"] = 10;
     }
-    return delay(defaultMap);
+    return defaultMap;
   },
 
   async saveTargetAllocation(targetMap) {
-    const db = readDB();
-    const user = requireAuth(db);
-
+    const userId = getCurrentUserId();
     let total = 0;
     const cleanMap = {};
     for (const [key, val] of Object.entries(targetMap)) {
@@ -907,21 +861,31 @@ export const analytics = {
       throw new ApiError("VALIDATION", `Target allocations must sum to 100% (currently ${round2(total)}%).`);
     }
 
-    // Adjust slight float rounding difference to first key
     const diff = round2(100 - total);
     const firstKey = Object.keys(cleanMap)[0];
     if (diff !== 0 && firstKey) {
       cleanMap[firstKey] = round2(cleanMap[firstKey] + diff);
     }
 
-    user.target_allocation = cleanMap;
-    writeDB(db);
-    return delay(cleanMap);
+    localStorage.setItem(`investmate_target_alloc_${userId}`, JSON.stringify(cleanMap));
+    return cleanMap;
   },
 
   async getRebalancingPlan() {
     const rows = await investments.list({ status: "active" });
     const targetMap = await analytics.getTargetAllocation();
+
+    if (!rows || rows.length === 0) {
+      return {
+        total_portfolio_value: 0,
+        items: [],
+        health_score: 100,
+        health_status: "No active holdings",
+        total_drift: 0,
+        suggestions: [],
+        target_allocation: targetMap,
+      };
+    }
 
     const currentByAsset = {};
     let totalPortfolioValue = 0;
@@ -997,7 +961,7 @@ export const analytics = {
       });
     }
 
-    return delay({
+    return {
       total_portfolio_value: round2(totalPortfolioValue),
       items: items.sort((a, b) => b.current_value - a.current_value),
       health_score: healthScore,
@@ -1005,7 +969,7 @@ export const analytics = {
       total_drift: totalDrift,
       suggestions,
       target_allocation: targetMap,
-    });
+    };
   },
 };
 
@@ -1013,102 +977,94 @@ export const analytics = {
 
 export const goals = {
   async list() {
-    const db = readDB();
-    const user = requireAuth(db);
-    const userGoals = (db.goals || [])
-      .filter((g) => g.user_id === user.id)
-      .sort((a, b) => {
-        if (!a.target_date) return 1;
-        if (!b.target_date) return -1;
-        return a.target_date.localeCompare(b.target_date);
-      });
-    return delay(userGoals);
+    getCurrentUserId();
+
+    const { data, error } = await supabase
+      .from("goals")
+      .select("*")
+      .order("target_date", { ascending: true, nullsFirst: false });
+
+    if (error) handleSupabaseError(error, "Failed to load goals");
+    return (data || []).map((g) => ({
+      id: g.id,
+      user_id: g.user_id,
+      name: g.name,
+      target_amount: Number(g.target_amount) || 0,
+      target_date: g.target_date,
+      category: g.category || "",
+      notes: g.notes || "",
+      linked_holding_ids: g.linked_holding_ids || [],
+      created_at: g.created_at,
+      updated_at: g.updated_at,
+    }));
   },
 
   async create(payload) {
-    const db = readDB();
-    const user = requireAuth(db);
+    const userId = getCurrentUserId();
     const name = String(payload.name || "").trim();
     const targetAmount = Number(payload.target_amount);
     if (!name) throw new ApiError("VALIDATION", "Goal name is required.");
     if (!targetAmount || targetAmount <= 0) throw new ApiError("VALIDATION", "Target amount must be greater than zero.");
 
     const row = {
-      id: nextId(db, "goals"),
-      user_id: user.id,
+      id: generateId("gol"),
+      user_id: userId,
       name,
       target_amount: round2(targetAmount),
       target_date: payload.target_date || null,
       notes: payload.notes ? String(payload.notes).trim() : "",
+      category: payload.category || "",
+      linked_holding_ids: payload.linked_holding_ids || [],
       created_at: nowISO(),
       updated_at: nowISO(),
     };
 
-    if (!Array.isArray(db.goals)) db.goals = [];
-    db.goals.push(row);
-    writeDB(db);
-    return delay(row);
+    const { error } = await supabase.from("goals").insert(row);
+    if (error) handleSupabaseError(error, "Failed to create goal");
+    return row;
   },
 
   async update(id, payload) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const row = (db.goals || []).find((g) => g.id === id && g.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Goal not found.");
+    getCurrentUserId();
+    const patch = { updated_at: nowISO() };
 
     if (payload.name !== undefined) {
       const name = String(payload.name || "").trim();
       if (!name) throw new ApiError("VALIDATION", "Goal name cannot be empty.");
-      row.name = name;
+      patch.name = name;
     }
     if (payload.target_amount !== undefined) {
       const amt = Number(payload.target_amount);
       if (!amt || amt <= 0) throw new ApiError("VALIDATION", "Target amount must be greater than zero.");
-      row.target_amount = round2(amt);
+      patch.target_amount = round2(amt);
     }
-    if (payload.target_date !== undefined) {
-      row.target_date = payload.target_date || null;
-    }
-    if (payload.notes !== undefined) {
-      row.notes = String(payload.notes || "").trim();
-    }
-    row.updated_at = nowISO();
-    writeDB(db);
-    return delay(row);
+    if (payload.target_date !== undefined) patch.target_date = payload.target_date || null;
+    if (payload.notes !== undefined) patch.notes = String(payload.notes || "").trim();
+    if (payload.category !== undefined) patch.category = payload.category;
+    if (payload.linked_holding_ids !== undefined) patch.linked_holding_ids = payload.linked_holding_ids;
+
+    const { error } = await supabase.from("goals").update(patch).eq("id", id);
+    if (error) handleSupabaseError(error, "Failed to update goal");
+
+    const { data } = await supabase.from("goals").select("*").eq("id", id).single();
+    return data;
   },
 
   async delete(id) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const idx = (db.goals || []).findIndex((g) => g.id === id && g.user_id === user.id);
-    if (idx === -1) throw new ApiError("NOT_FOUND", "Goal not found.");
-    db.goals.splice(idx, 1);
-    writeDB(db);
-    return delay({ success: true });
+    getCurrentUserId();
+    const { error } = await supabase.from("goals").delete().eq("id", id);
+    if (error) handleSupabaseError(error, "Failed to delete goal");
+    return { success: true };
   },
 
   async getSummary() {
-    const db = readDB();
-    const user = requireAuth(db);
-    const userGoals = (db.goals || [])
-      .filter((g) => g.user_id === user.id)
-      .sort((a, b) => {
-        if (!a.target_date) return 1;
-        if (!b.target_date) return -1;
-        return a.target_date.localeCompare(b.target_date);
-      });
+    const userGoals = await goals.list();
+    const allHoldings = await investments.list({ status: "active" });
 
-    // Compute current total portfolio value from active holdings
-    const activeHoldings = db.investments.filter((i) => i.user_id === user.id && i.status === "active");
     let totalPortfolioValue = 0;
-    let totalInvested = 0;
-    for (const h of activeHoldings) {
-      const m = computeHoldingMetrics(h);
-      totalPortfolioValue += m.current_value;
-      totalInvested += m.invested_amount;
+    for (const h of allHoldings) {
+      totalPortfolioValue += h.current_value;
     }
-
-    const portfolioReturnPct = totalInvested > 0 ? ((totalPortfolioValue - totalInvested) / totalInvested) * 100 : 0;
 
     const enrichedGoals = userGoals.map((g) => {
       const targetAmount = Number(g.target_amount) || 0;
@@ -1117,7 +1073,6 @@ export const goals = {
       const remainingAmount = Math.max(0, round2(targetAmount - currentAmount));
       const isReached = currentAmount >= targetAmount;
 
-      // Projection calculation
       let projection = null;
       if (isReached) {
         projection = {
@@ -1127,7 +1082,7 @@ export const goals = {
           isOnTrack: true,
         };
       } else {
-        const growthRateAnnual = portfolioReturnPct > 2 ? Math.min(portfolioReturnPct / 100, 0.35) : 0.10;
+        const growthRateAnnual = 0.12; // baseline projection
         if (currentAmount > 0 && targetAmount > currentAmount) {
           const yearsNeeded = Math.log(targetAmount / currentAmount) / Math.log(1 + growthRateAnnual);
           if (yearsNeeded > 0 && Number.isFinite(yearsNeeded)) {
@@ -1186,13 +1141,13 @@ export const goals = {
 
     const primaryGoal = enrichedGoals.find((g) => !g.is_reached) || enrichedGoals[0] || null;
 
-    return delay({
+    return {
       goals: enrichedGoals,
       primary_goal: primaryGoal,
       total_portfolio_value: round2(totalPortfolioValue),
       goals_count: enrichedGoals.length,
       achieved_count: enrichedGoals.filter((g) => g.is_reached).length,
-    });
+    };
   },
 };
 
@@ -1200,313 +1155,326 @@ export const goals = {
 
 export const alerts = {
   async list(investmentId = null) {
-    const db = readDB();
-    const user = requireAuth(db);
-    if (!Array.isArray(db.alerts)) db.alerts = [];
+    getCurrentUserId();
 
-    let userAlerts = db.alerts.filter((a) => a.user_id === user.id);
+    let query = supabase
+      .from("price_alerts")
+      .select("*, holdings(id, name, identifier, asset_type, current_price, unit)")
+      .order("created_at", { ascending: false });
+
     if (investmentId) {
-      userAlerts = userAlerts.filter((a) => a.investment_id === investmentId);
+      query = query.eq("holding_id", investmentId);
     }
 
-    let modified = false;
-    const enriched = userAlerts.map((a) => {
-      const holding = db.investments.find((i) => i.id === a.investment_id && i.user_id === user.id);
-      const currentPrice = holding ? (Number(holding.current_price) || 0) : 0;
+    const { data, error } = await query;
+    if (error) handleSupabaseError(error, "Failed to load price alerts");
+
+    const enriched = (data || []).map((a) => {
+      const holding = a.holdings;
+      const currentPrice = holding ? Number(holding.current_price) || 0 : 0;
       const targetPrice = Number(a.target_price) || 0;
 
-      let isTriggered = false;
-      if (holding && holding.status === "active" && a.is_active !== false) {
-        if (a.condition === "above" && currentPrice >= targetPrice) {
-          isTriggered = true;
-        } else if (a.condition === "below" && currentPrice <= targetPrice) {
-          isTriggered = true;
-        }
-      }
-
-      if (a.is_triggered !== isTriggered) {
-        a.is_triggered = isTriggered;
-        if (isTriggered && !a.triggered_at) {
-          a.triggered_at = nowISO();
-        }
-        modified = true;
+      let isTriggered = a.triggered;
+      if (holding) {
+        if (a.direction === "above" && currentPrice >= targetPrice) isTriggered = true;
+        else if (a.direction === "below" && currentPrice <= targetPrice) isTriggered = true;
       }
 
       return {
-        ...a,
+        id: a.id,
+        investment_id: a.holding_id,
+        holding_id: a.holding_id,
+        target_price: targetPrice,
+        condition: a.direction,
+        direction: a.direction,
         is_triggered: isTriggered,
+        triggered: isTriggered,
+        triggered_at: a.triggered_at,
+        dismissed: a.dismissed || false,
+        notes: a.notes || "",
         holding_name: holding ? holding.name : "Unknown holding",
         identifier: holding ? holding.identifier : "",
         asset_type: holding ? holding.asset_type : "stocks",
         unit: holding ? holding.unit : "units",
         current_price: currentPrice,
-        currency: user.currency || "INR",
+        created_at: a.created_at,
       };
     });
 
-    if (modified) {
-      writeDB(db);
-    }
-
-    return delay(
-      enriched.sort((a, b) => {
-        // Triggered and non-dismissed first
-        const aActiveTrigger = a.is_triggered && !a.dismissed;
-        const bActiveTrigger = b.is_triggered && !b.dismissed;
-        if (aActiveTrigger && !bActiveTrigger) return -1;
-        if (!aActiveTrigger && bActiveTrigger) return 1;
-        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
-      })
-    );
+    return enriched.sort((a, b) => {
+      const aActive = a.is_triggered && !a.dismissed;
+      const bActive = b.is_triggered && !b.dismissed;
+      if (aActive && !bActive) return -1;
+      if (!aActive && bActive) return 1;
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
   },
 
   async getTriggered() {
     const all = await alerts.list();
-    return all.filter((a) => a.is_triggered && !a.dismissed && a.is_active !== false);
+    return all.filter((a) => a.is_triggered && !a.dismissed);
   },
 
-  async create({ investment_id, target_price, condition, notes }) {
-    const db = readDB();
-    const user = requireAuth(db);
-    const holding = db.investments.find((i) => i.id === investment_id && i.user_id === user.id);
+  async create({ investment_id, target_price, condition, direction, notes: _notes }) {
+    getCurrentUserId();
+    const holding = await investments.get(investment_id);
     if (!holding) throw new ApiError("NOT_FOUND", "Holding not found.");
 
     const price = Number(target_price);
+    const cond = condition || direction || "above";
     if (!price || price <= 0) throw new ApiError("VALIDATION", "Target price must be greater than zero.");
-    if (!["above", "below"].includes(condition)) throw new ApiError("VALIDATION", "Condition must be 'above' or 'below'.");
+    if (!["above", "below"].includes(cond)) throw new ApiError("VALIDATION", "Condition must be 'above' or 'below'.");
 
     const currentPrice = Number(holding.current_price) || 0;
-    const isTriggered = (condition === "above" && currentPrice >= price) || (condition === "below" && currentPrice <= price);
+    const isTriggered = (cond === "above" && currentPrice >= price) || (cond === "below" && currentPrice <= price);
 
+    const alertId = generateId("alt");
     const row = {
-      id: nextId(db, "alerts"),
-      user_id: user.id,
-      investment_id: holding.id,
+      id: alertId,
+      holding_id: investment_id,
       target_price: round2(price),
-      condition,
-      notes: notes ? String(notes).trim() : "",
-      is_active: true,
-      is_triggered: isTriggered,
+      direction: cond,
+      triggered: isTriggered,
       triggered_at: isTriggered ? nowISO() : null,
-      dismissed: false,
       created_at: nowISO(),
-      updated_at: nowISO(),
     };
 
-    if (!Array.isArray(db.alerts)) db.alerts = [];
-    db.alerts.push(row);
-    writeDB(db);
+    const { error } = await supabase.from("price_alerts").insert(row);
+    if (error) handleSupabaseError(error, "Failed to create price alert");
 
-    return delay({
-      ...row,
+    return {
+      id: alertId,
+      investment_id,
+      holding_id: investment_id,
+      target_price: round2(price),
+      condition: cond,
+      direction: cond,
+      is_triggered: isTriggered,
+      triggered: isTriggered,
+      triggered_at: isTriggered ? nowISO() : null,
       holding_name: holding.name,
       identifier: holding.identifier,
       asset_type: holding.asset_type,
       current_price: currentPrice,
-      currency: user.currency || "INR",
-    });
+    };
   },
 
   async update(id, payload) {
-    const db = readDB();
-    const user = requireAuth(db);
-    if (!Array.isArray(db.alerts)) db.alerts = [];
-    const row = db.alerts.find((a) => a.id === id && a.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Alert not found.");
+    getCurrentUserId();
+    const patch = {};
 
     if (payload.target_price !== undefined) {
       const price = Number(payload.target_price);
       if (!price || price <= 0) throw new ApiError("VALIDATION", "Target price must be greater than zero.");
-      row.target_price = round2(price);
-      row.dismissed = false;
+      patch.target_price = round2(price);
+      patch.triggered = false;
     }
-    if (payload.condition !== undefined) {
-      if (!["above", "below"].includes(payload.condition)) throw new ApiError("VALIDATION", "Condition must be 'above' or 'below'.");
-      row.condition = payload.condition;
-      row.dismissed = false;
+    if (payload.condition !== undefined || payload.direction !== undefined) {
+      const cond = payload.condition || payload.direction;
+      if (!["above", "below"].includes(cond)) throw new ApiError("VALIDATION", "Condition must be 'above' or 'below'.");
+      patch.direction = cond;
+      patch.triggered = false;
     }
-    if (payload.is_active !== undefined) {
-      row.is_active = Boolean(payload.is_active);
-    }
-    if (payload.notes !== undefined) {
-      row.notes = String(payload.notes || "").trim();
-    }
-    row.updated_at = nowISO();
-    writeDB(db);
 
-    const holding = db.investments.find((i) => i.id === row.investment_id);
-    return delay({
-      ...row,
-      holding_name: holding?.name || "",
-      identifier: holding?.identifier || "",
-      current_price: holding?.current_price || 0,
-      currency: user.currency || "INR",
-    });
+    const { error } = await supabase.from("price_alerts").update(patch).eq("id", id);
+    if (error) handleSupabaseError(error, "Failed to update price alert");
+
+    const list = await alerts.list();
+    return list.find((a) => a.id === id);
   },
 
   async dismiss(id) {
-    const db = readDB();
-    const user = requireAuth(db);
-    if (!Array.isArray(db.alerts)) db.alerts = [];
-    const row = db.alerts.find((a) => a.id === id && a.user_id === user.id);
-    if (!row) throw new ApiError("NOT_FOUND", "Alert not found.");
-    row.dismissed = true;
-    row.updated_at = nowISO();
-    writeDB(db);
-    return delay({ success: true, id });
+    // Local dismissal state for UI
+    try {
+      const dismissed = JSON.parse(localStorage.getItem("investmate_dismissed_alerts") || "[]");
+      if (!dismissed.includes(id)) {
+        dismissed.push(id);
+        localStorage.setItem("investmate_dismissed_alerts", JSON.stringify(dismissed));
+      }
+    } catch {
+      // ignore
+    }
+    return { success: true, id };
   },
 
   async dismissAll() {
-    const db = readDB();
-    const user = requireAuth(db);
-    if (!Array.isArray(db.alerts)) db.alerts = [];
-    let count = 0;
-    for (const a of db.alerts) {
-      if (a.user_id === user.id && a.is_triggered && !a.dismissed) {
-        a.dismissed = true;
-        a.updated_at = nowISO();
-        count++;
-      }
+    try {
+      const all = await alerts.list();
+      const allIds = all.map((a) => a.id);
+      localStorage.setItem("investmate_dismissed_alerts", JSON.stringify(allIds));
+    } catch {
+      // ignore
     }
-    writeDB(db);
-    return delay({ success: true, count });
+    return { success: true };
   },
 
   async delete(id) {
-    const db = readDB();
-    const user = requireAuth(db);
-    if (!Array.isArray(db.alerts)) db.alerts = [];
-    const idx = db.alerts.findIndex((a) => a.id === id && a.user_id === user.id);
-    if (idx === -1) throw new ApiError("NOT_FOUND", "Alert not found.");
-    db.alerts.splice(idx, 1);
-    writeDB(db);
-    return delay({ success: true });
+    getCurrentUserId();
+    const { error } = await supabase.from("price_alerts").delete().eq("id", id);
+    if (error) handleSupabaseError(error, "Failed to delete alert");
+    return { success: true };
   },
 };
 
-// ── DEMO seed ─────────────────────────────────────────────────────────────
+// ── DEMO SEED ─────────────────────────────────────────────────────────────
 
-export async function seedDemoData(userId) {
-  const db = readDB();
-  const sample = [
-    { asset_type: "stocks", name: "HDFC Bank Ltd", identifier: "HDFCBANK", quantity: 25, purchase_price: 1480, current_price: 1642, purchase_date: "2023-04-11", platform: "Zerodha", fees_paid: 45, taxes_paid: 12, type_fields: { exchange: "NSE", sector: "Banking" } },
-    { asset_type: "stocks", name: "Tata Motors", identifier: "TATAMOTORS", quantity: 60, purchase_price: 610, current_price: 545, purchase_date: "2024-01-22", platform: "Zerodha", fees_paid: 30, taxes_paid: 8, type_fields: { exchange: "NSE", sector: "Auto" } },
-    { asset_type: "mutual_fund", name: "Parag Parikh Flexi Cap", identifier: "PPFCF", quantity: 412.6, purchase_price: 58.2, current_price: 78.9, purchase_date: "2022-06-01", platform: "Groww", fees_paid: 0, taxes_paid: 0, type_fields: { fund_type: "Equity", folio_number: "88213311" } },
-    { asset_type: "mutual_fund", name: "ICICI Pru Liquid Fund", identifier: "ICICILIQ", quantity: 1180.3, purchase_price: 305.1, current_price: 318.4, purchase_date: "2023-09-14", platform: "Groww", fees_paid: 0, taxes_paid: 0, type_fields: { fund_type: "Debt", folio_number: "44120098" } },
-    { asset_type: "gold", name: "Sovereign Gold Bond 2029", identifier: "SGB-2029", quantity: 12, purchase_price: 5620, current_price: 7180, purchase_date: "2021-08-10", platform: "RBI Retail Direct", fees_paid: 0, taxes_paid: 0, type_fields: { gold_form: "Sovereign Gold Bond", purity: "999" } },
-    { asset_type: "fixed_deposit", name: "HDFC Bank FD", identifier: "FD-2231", quantity: 1, purchase_price: 250000, current_price: 268750, purchase_date: "2023-03-01", platform: "HDFC Bank", fees_paid: 0, taxes_paid: 3200, type_fields: { bank_name: "HDFC Bank", interest_rate: "7.25", maturity_date: "2026-03-01", compounding: "Cumulative" } },
-    { asset_type: "crypto", name: "Bitcoin", identifier: "BTC", quantity: 0.045, purchase_price: 3180000, current_price: 5720000, purchase_date: "2023-11-05", platform: "CoinDCX", fees_paid: 210, taxes_paid: 620, type_fields: { exchange_wallet: "CoinDCX", network: "Bitcoin" } },
-    { asset_type: "crypto", name: "Ethereum", identifier: "ETH", quantity: 0.9, purchase_price: 168000, current_price: 152000, purchase_date: "2024-02-18", platform: "CoinDCX", fees_paid: 95, taxes_paid: 210, type_fields: { exchange_wallet: "CoinDCX", network: "Ethereum" } },
-  ];
+export async function seedDemoData(_userId) {
+  // Empty implementation — all accounts start cleanly with zero holdings
+  return { seeded: false };
+}
 
-  for (const s of sample) {
-    const txId = nextId(db, "transactions");
-    const sampleIncome = [];
-    if (s.identifier === "HDFCBANK") {
-      sampleIncome.push({
-        id: nextId(db, "income"),
-        type: "dividend",
-        date: "2023-08-16",
-        amount: 475,
-        notes: "Interim dividend ₹19/share",
-      });
-    } else if (s.identifier === "FD-2231") {
-      sampleIncome.push({
-        id: nextId(db, "income"),
-        type: "interest",
-        date: "2024-03-01",
-        amount: 18125,
-        notes: "Annual cumulative interest credited",
-      });
-    }
+// ── DATA MIGRATION HELPER (localStorage → Supabase) ──────────────────────
 
-    db.investments.push({
-      id: nextId(db, "investments"),
-      user_id: userId,
-      asset_type: s.asset_type,
-      name: s.name,
-      identifier: s.identifier,
-      unit: ASSET_TYPES[s.asset_type].unitLabel,
-      current_price: s.current_price,
-      current_price_updated_at: nowISO(),
-      platform: s.platform,
-      notes: "",
-      status: "active",
-      sold_price: null,
-      sold_date: null,
-      type_fields: s.type_fields || {},
-      transactions: [
-        {
-          id: txId,
-          type: "buy",
-          date: s.purchase_date,
-          quantity: s.quantity,
-          pricePerUnit: s.purchase_price,
-          fees: (s.fees_paid || 0) + (s.taxes_paid || 0),
-        },
-      ],
-      income: sampleIncome,
-      created_at: nowISO(),
-      updated_at: nowISO(),
-    });
-  }
+/**
+ * Checks if there is unmigrated data stored in localStorage
+ */
+export function checkLocalStorageDataToMigrate(userId) {
+  if (!userId) return null;
+  try {
+    const isMigrated = localStorage.getItem(`investmate_migrated_supabase_${userId}`);
+    if (isMigrated === "true") return null;
 
-  if (!db.goals) db.goals = [];
-  if (!db.goals.some((g) => g.user_id === userId)) {
-    db.goals.push(
-      {
-        id: nextId(db, "goals"),
-        user_id: userId,
-        name: "Emergency Fund & Runway",
-        target_amount: 1000000,
-        target_date: "2027-06-30",
-        notes: "6 to 12 months liquid expenses + safety margin.",
-        created_at: nowISO(),
-        updated_at: nowISO(),
-      },
-      {
-        id: nextId(db, "goals"),
-        user_id: userId,
-        name: "Home Down Payment",
-        target_amount: 2500000,
-        target_date: "2028-12-31",
-        notes: "Target down payment for real estate purchase.",
-        created_at: nowISO(),
-        updated_at: nowISO(),
-      }
-    );
-  }
+    const raw = localStorage.getItem("investmate_db_v1");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
 
-  if (!db.alerts) db.alerts = [];
-  if (!db.alerts.some((a) => a.user_id === userId)) {
-    const hdfc = db.investments.find((i) => i.user_id === userId && i.identifier === "HDFCBANK");
-    if (hdfc) {
-      db.alerts.push({
-        id: nextId(db, "alerts"),
-        user_id: userId,
-        investment_id: hdfc.id,
-        target_price: 1700,
-        condition: "above",
-        notes: "Target profit booking zone",
-        is_active: true,
-        is_triggered: false,
-        triggered_at: null,
-        dismissed: false,
-        created_at: nowISO(),
-        updated_at: nowISO(),
-      });
-    }
-  }
+    const holdingsCount = Array.isArray(parsed?.investments) ? parsed.investments.length : 0;
+    const goalsCount = Array.isArray(parsed?.goals) ? parsed.goals.length : 0;
+    const alertsCount = Array.isArray(parsed?.alerts) ? parsed.alerts.length : 0;
 
-  const u = db.users.find((user) => user.id === userId);
-  if (u && !u.target_allocation) {
-    u.target_allocation = {
-      stocks: 45,
-      mutual_fund: 25,
-      fixed_deposit: 15,
-      gold: 15,
+    if (holdingsCount === 0 && goalsCount === 0 && alertsCount === 0) return null;
+
+    return {
+      holdingsCount,
+      goalsCount,
+      alertsCount,
+      parsedData: parsed,
     };
+  } catch (err) {
+    console.error("Failed to check localStorage migration data:", err);
+    return null;
+  }
+}
+
+/**
+ * Migrates local data into Supabase for the current user
+ */
+export async function migrateLocalStorageToSupabase(userId) {
+  if (!userId) userId = getCurrentUserId();
+  const info = checkLocalStorageDataToMigrate(userId);
+  if (!info) return { migrated: false, message: "No local data to migrate." };
+
+  const db = info.parsedData;
+  let importedHoldings = 0;
+  let importedGoals = 0;
+  let importedAlerts = 0;
+
+  // 1. Migrate Holdings, Transactions, and Income
+  if (Array.isArray(db.investments)) {
+    for (const inv of db.investments) {
+      const holdingId = inv.id || generateId("inv");
+      const holdingRow = {
+        id: holdingId,
+        user_id: userId,
+        asset_type: inv.asset_type || "stocks",
+        name: inv.name || "Untitled",
+        identifier: inv.identifier || "",
+        unit: inv.unit || ASSET_TYPES[inv.asset_type]?.unitLabel || "units",
+        quantity: Number(inv.quantity) || 0,
+        purchase_price: Number(inv.purchase_price) || 0,
+        purchase_date: inv.purchase_date || todayISO(),
+        fees_paid: Number(inv.fees_paid) || 0,
+        taxes_paid: Number(inv.taxes_paid) || 0,
+        current_price: Number(inv.current_price) || Number(inv.purchase_price) || 0,
+        platform: inv.platform || "",
+        status: inv.status || "active",
+        sold_price: inv.sold_price != null ? Number(inv.sold_price) : null,
+        sold_date: inv.sold_date || null,
+        notes: inv.notes || "",
+        type_fields: inv.type_fields || {},
+        created_at: inv.created_at || nowISO(),
+        updated_at: inv.updated_at || nowISO(),
+      };
+
+      await supabase.from("holdings").upsert(holdingRow);
+      importedHoldings++;
+
+      // Transactions
+      if (Array.isArray(inv.transactions) && inv.transactions.length > 0) {
+        for (const tx of inv.transactions) {
+          await supabase.from("transactions").upsert({
+            id: tx.id || generateId("tx"),
+            holding_id: holdingId,
+            type: tx.type || "buy",
+            date: tx.date || todayISO(),
+            quantity: Number(tx.quantity) || 0,
+            price_per_unit: Number(tx.pricePerUnit || tx.price_per_unit) || 0,
+            fees: Number(tx.fees) || 0,
+            notes: tx.notes || "",
+            created_at: tx.created_at || nowISO(),
+          });
+        }
+      }
+
+      // Income
+      if (Array.isArray(inv.income) && inv.income.length > 0) {
+        for (const inc of inv.income) {
+          await supabase.from("income_records").upsert({
+            id: inc.id || generateId("inc"),
+            holding_id: holdingId,
+            type: inc.type || "dividend",
+            date: inc.date || todayISO(),
+            amount: Number(inc.amount) || 0,
+            reinvested: Boolean(inc.reinvested),
+            notes: inc.notes || "",
+            created_at: inc.created_at || nowISO(),
+          });
+        }
+      }
+    }
   }
 
-  writeDB(db);
+  // 2. Migrate Goals
+  if (Array.isArray(db.goals)) {
+    for (const g of db.goals) {
+      await supabase.from("goals").upsert({
+        id: g.id || generateId("gol"),
+        user_id: userId,
+        name: g.name || "Untitled Goal",
+        target_amount: Number(g.target_amount) || 0,
+        target_date: g.target_date || null,
+        category: g.category || "",
+        notes: g.notes || "",
+        created_at: g.created_at || nowISO(),
+        updated_at: g.updated_at || nowISO(),
+      });
+      importedGoals++;
+    }
+  }
+
+  // 3. Migrate Alerts
+  if (Array.isArray(db.alerts)) {
+    for (const a of db.alerts) {
+      await supabase.from("price_alerts").upsert({
+        id: a.id || generateId("alt"),
+        holding_id: a.investment_id || a.holding_id,
+        target_price: Number(a.target_price) || 0,
+        direction: a.condition || a.direction || "above",
+        triggered: Boolean(a.is_triggered || a.triggered),
+        triggered_at: a.triggered_at || null,
+        created_at: a.created_at || nowISO(),
+      });
+      importedAlerts++;
+    }
+  }
+
+  // Mark migration complete in localStorage
+  localStorage.setItem(`investmate_migrated_supabase_${userId}`, "true");
+
+  return {
+    migrated: true,
+    importedHoldings,
+    importedGoals,
+    importedAlerts,
+  };
 }

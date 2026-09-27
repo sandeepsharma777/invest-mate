@@ -25,6 +25,13 @@ const ALERT_SVG = (
     <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
   </svg>
 );
+const MORE_SVG = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+    <circle cx="12" cy="5" r="1.5" fill="currentColor" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+    <circle cx="12" cy="19" r="1.5" fill="currentColor" />
+  </svg>
+);
 
 const EMPTY_FORM = {
   asset_type: "", name: "", identifier: "", quantity: "", platform: "",
@@ -79,6 +86,14 @@ export default function Holdings() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("recent");
   const [expandedIds, setExpandedIds] = useState(new Set());
+  const [openMenuRowId, setOpenMenuRowId] = useState(null);
+
+  useEffect(() => {
+    if (!openMenuRowId) return;
+    const handleClickOutside = () => setOpenMenuRowId(null);
+    window.addEventListener("click", handleClickOutside);
+    return () => window.removeEventListener("click", handleClickOutside);
+  }, [openMenuRowId]);
 
   // Add/Edit modal
   const [modalOpen, setModalOpen] = useState(false);
@@ -457,17 +472,6 @@ export default function Holdings() {
           <p className="topbar__sub">Every position you've entered, tracked with granular transaction history.</p>
         </div>
         <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
-          <button
-            type="button"
-            className="topbar-alert-btn"
-            title="Price Alerts"
-            onClick={() => openSetAlertModal()}
-          >
-            {ALERT_SVG}
-            {triggeredAlerts.length > 0 && (
-              <span className="topbar-alert-btn__badge">{triggeredAlerts.length}</span>
-            )}
-          </button>
           <button className="btn btn--primary" onClick={() => openAddModal()}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
             Add investment
@@ -546,11 +550,12 @@ export default function Holdings() {
                   return (
                     <Fragment key={r.id}>
                       <tr className={isExpanded ? "is-row-expanded" : ""}>
-                        <td style={{ width: 34, paddingRight: 0 }}>
+                        <td style={{ width: 44, paddingRight: 4, paddingLeft: 12 }}>
                           <button
                             type="button"
                             className={`expand-btn ${isExpanded ? "is-active" : ""}`}
-                            title={isExpanded ? "Hide transactions" : "Show transactions"}
+                            title={isExpanded ? "Collapse transaction history" : `Expand transaction history (${txCount} txn${txCount === 1 ? "" : "s"})`}
+                            aria-label={isExpanded ? "Collapse transaction history" : `Expand transaction history (${txCount} txn${txCount === 1 ? "" : "s"})`}
                             onClick={() => toggleExpand(r.id)}
                             aria-expanded={isExpanded}
                           >
@@ -559,29 +564,34 @@ export default function Holdings() {
                               fill="none"
                               stroke="currentColor"
                               strokeWidth="2.5"
-                              style={{
-                                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                                transition: "transform 0.15s ease",
-                                width: 14,
-                                height: 14,
-                              }}
+                              className="expand-chevron"
                             >
-                              <path d="M9 5l7 7-7 7" />
+                              <path d="M9 6l6 6-6 6" />
                             </svg>
                           </button>
                         </td>
                         <td>
                           <span className="cell-primary">{r.name}</span>
-                          <span className="cell-sub">
-                            {r.identifier || r.platform || "—"}
-                            {r.status === "sold" ? " · Sold" : ""}
-                            {" · "}
+                          <span className="cell-sub holding-sub-row">
+                            <span>{r.identifier || r.platform || "—"}{r.status === "sold" ? " · Sold" : ""}</span>
                             <button
                               type="button"
-                              className="link-btn"
+                              className={`tx-pill-btn ${isExpanded ? "is-active" : ""}`}
                               onClick={() => toggleExpand(r.id)}
+                              title={isExpanded ? "Hide transaction history" : `View ${txCount} transaction${txCount === 1 ? "" : "s"}`}
+                              aria-expanded={isExpanded}
                             >
-                              {txCount} txn{txCount === 1 ? "" : "s"}
+                              <span className="tx-pill-btn__dot" />
+                              <span>{txCount} txn{txCount === 1 ? "" : "s"}</span>
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                                className="tx-pill-btn__chevron"
+                              >
+                                <path d="M6 9l6 6 6-6" />
+                              </svg>
                             </button>
                           </span>
                         </td>
@@ -602,14 +612,139 @@ export default function Holdings() {
                         </td>
                         <td>
                           <div className="row-actions">
-                            <button className="icon-btn" title="Set price alert" onClick={() => openSetAlertModal(r)}>{ALERT_SVG}</button>
-                            <button className="icon-btn" title="Record income" onClick={() => openIncomeModal(r)}>{INCOME_SVG}</button>
-                            <button className="icon-btn" title="Add transaction" onClick={() => openAddTxModal(r, "buy")}>{PLUS_SVG}</button>
-                            {r.quantity > 0 && (
-                              <button className="icon-btn" title="Sell units" onClick={() => openSellModal(r.id)}>{SELL_SVG}</button>
-                            )}
-                            <button className="icon-btn" title="Edit" onClick={() => openEditModal(r.id)}>{EDIT_SVG}</button>
-                            <button className="icon-btn" title="Delete" onClick={() => openDeleteModal(r.id)}>{DEL_SVG}</button>
+                            <div className="row-actions__inline">
+                              <button
+                                type="button"
+                                className="row-action-btn row-action-btn--alert"
+                                title="Set price alert"
+                                aria-label="Set price alert"
+                                onClick={() => openSetAlertModal(r)}
+                              >
+                                {ALERT_SVG}
+                              </button>
+                              <button
+                                type="button"
+                                className="row-action-btn row-action-btn--income"
+                                title="Record income (dividend / interest)"
+                                aria-label="Record income"
+                                onClick={() => openIncomeModal(r)}
+                              >
+                                {INCOME_SVG}
+                              </button>
+                              <button
+                                type="button"
+                                className="row-action-btn row-action-btn--buy"
+                                title="Buy more / Add transaction"
+                                aria-label="Buy more units"
+                                onClick={() => openAddTxModal(r, "buy")}
+                              >
+                                {PLUS_SVG}
+                              </button>
+                              {r.quantity > 0 && (
+                                <button
+                                  type="button"
+                                  className="row-action-btn row-action-btn--sell"
+                                  title="Sell units"
+                                  aria-label="Sell units"
+                                  onClick={() => openSellModal(r.id)}
+                                >
+                                  {SELL_SVG}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="row-action-btn row-action-btn--edit"
+                                title="Edit holding"
+                                aria-label="Edit holding"
+                                onClick={() => openEditModal(r.id)}
+                              >
+                                {EDIT_SVG}
+                              </button>
+                              <button
+                                type="button"
+                                className="row-action-btn row-action-btn--delete"
+                                title="Delete holding"
+                                aria-label="Delete holding"
+                                onClick={() => openDeleteModal(r.id)}
+                              >
+                                {DEL_SVG}
+                              </button>
+                            </div>
+
+                            <div className="row-actions__menu-wrapper">
+                              <button
+                                type="button"
+                                className={`row-action-btn row-actions__menu-btn ${openMenuRowId === r.id ? "is-active" : ""}`}
+                                title="More actions"
+                                aria-label="More actions"
+                                aria-expanded={openMenuRowId === r.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenMenuRowId(openMenuRowId === r.id ? null : r.id);
+                                }}
+                              >
+                                {MORE_SVG}
+                              </button>
+
+                              {openMenuRowId === r.id && (
+                                <div
+                                  className="row-dropdown-menu"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <button
+                                    type="button"
+                                    className="row-dropdown-item"
+                                    onClick={() => { setOpenMenuRowId(null); openSetAlertModal(r); }}
+                                  >
+                                    <span className="row-dropdown-item__icon text-gold">{ALERT_SVG}</span>
+                                    <span>Set price alert</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="row-dropdown-item"
+                                    onClick={() => { setOpenMenuRowId(null); openIncomeModal(r); }}
+                                  >
+                                    <span className="row-dropdown-item__icon text-purple">{INCOME_SVG}</span>
+                                    <span>Record income</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="row-dropdown-item"
+                                    onClick={() => { setOpenMenuRowId(null); openAddTxModal(r, "buy"); }}
+                                  >
+                                    <span className="row-dropdown-item__icon text-jade">{PLUS_SVG}</span>
+                                    <span>Buy more units</span>
+                                  </button>
+                                  {r.quantity > 0 && (
+                                    <button
+                                      type="button"
+                                      className="row-dropdown-item"
+                                      onClick={() => { setOpenMenuRowId(null); openSellModal(r.id); }}
+                                    >
+                                      <span className="row-dropdown-item__icon text-orange">{SELL_SVG}</span>
+                                      <span>Sell units</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="row-dropdown-item"
+                                    onClick={() => { setOpenMenuRowId(null); openEditModal(r.id); }}
+                                  >
+                                    <span className="row-dropdown-item__icon text-blue">{EDIT_SVG}</span>
+                                    <span>Edit holding</span>
+                                  </button>
+                                  <div className="row-dropdown-divider" />
+                                  <button
+                                    type="button"
+                                    className="row-dropdown-item row-dropdown-item--danger"
+                                    onClick={() => { setOpenMenuRowId(null); openDeleteModal(r.id); }}
+                                  >
+                                    <span className="row-dropdown-item__icon text-danger">{DEL_SVG}</span>
+                                    <span>Delete holding</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </td>
                       </tr>
