@@ -3,7 +3,7 @@
  * Ported from charts.js; formatCompact imported from utils instead of Utils global.
  * Used by AllocationDonut.jsx, ReturnsBarChart.jsx, InvestedVsCurrentChart.jsx.
  */
-import { formatCompact, formatPercent } from "./utils";
+import { formatCompact, formatPercent } from "./utils.js";
 
 export const PALETTE = {
   stocks: "#2F6B7D",
@@ -14,7 +14,7 @@ export const PALETTE = {
   other: "#5C6A73",
 };
 
-export function allocationDonutConfig(allocationRows) {
+export function allocationDonutConfig(allocationRows, currency = "INR") {
   const labels = allocationRows.map((r) => r.label);
   const values = allocationRows.map((r) => r.value);
   const colors = allocationRows.map((r) => PALETTE[r.asset_type] || PALETTE.other);
@@ -43,7 +43,7 @@ export function allocationDonutConfig(allocationRows) {
           bodyFont: { family: "IBM Plex Mono" },
           padding: 10,
           cornerRadius: 8,
-          callbacks: { label: (item) => ` ${item.label}: ${formatCompact(item.raw)}` },
+          callbacks: { label: (item) => ` ${item.label}: ${formatCompact(item.raw, currency)}` },
         },
       },
     },
@@ -93,7 +93,7 @@ export function returnsBarConfig(returnsRows) {
   };
 }
 
-export function investedVsCurrentConfig(returnsRows) {
+export function investedVsCurrentConfig(returnsRows, currency = "INR") {
   return {
     type: "bar",
     data: {
@@ -113,11 +113,11 @@ export function investedVsCurrentConfig(returnsRows) {
           bodyFont: { family: "IBM Plex Mono" },
           padding: 10,
           cornerRadius: 8,
-          callbacks: { label: (item) => ` ${item.dataset.label}: ${formatCompact(item.raw)}` },
+          callbacks: { label: (item) => ` ${item.dataset.label}: ${formatCompact(item.raw, currency)}` },
         },
       },
       scales: {
-        y: { ticks: { callback: (v) => formatCompact(v), font: { family: "IBM Plex Mono", size: 10 }, color: "#6B6152" }, grid: { color: "#EFE9DA" } },
+        y: { ticks: { callback: (v) => formatCompact(v, currency), font: { family: "IBM Plex Mono", size: 10 }, color: "#6B6152" }, grid: { color: "#EFE9DA" } },
         x: { ticks: { font: { family: "IBM Plex Sans", size: 11, weight: "600" }, color: "#201A12" }, grid: { display: false } },
       },
     },

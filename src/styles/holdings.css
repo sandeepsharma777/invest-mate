@@ -8,15 +8,24 @@
   border-bottom: 1px solid var(--ink-600);
   margin-bottom: var(--sp-5);
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 .tab-btn {
-  padding: var(--sp-2) var(--sp-4);
+  padding: 10px var(--sp-4);
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--ink-400);
   border-bottom: 2px solid transparent;
   white-space: nowrap;
-  display: flex; align-items: center; gap: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  touch-action: manipulation;
 }
 .tab-btn .count {
   font-family: var(--font-mono);
@@ -163,6 +172,14 @@
 .badge-tx--sell {
   background: var(--oxblood-100);
   color: var(--oxblood-600);
+}
+.badge-tx--dividend {
+  background: var(--gold-100);
+  color: var(--gold-600);
+}
+.badge-tx--interest {
+  background: #ede9fe;
+  color: #6d28d9;
 }
 
 .icon-btn--sm {

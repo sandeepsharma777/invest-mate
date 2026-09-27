@@ -112,9 +112,13 @@ function migrateDB(db) {
   let modified = false;
   if (!db) return db;
   if (!Array.isArray(db.investments)) db.investments = [];
-  if (!db._seq) db._seq = { users: 0, investments: 0, transactions: 0, income: 0 };
+  if (!Array.isArray(db.goals)) { db.goals = []; modified = true; }
+  if (!Array.isArray(db.alerts)) { db.alerts = []; modified = true; }
+  if (!db._seq) db._seq = { users: 0, investments: 0, transactions: 0, income: 0, goals: 0, alerts: 0 };
   if (db._seq.transactions === undefined) db._seq.transactions = 0;
   if (db._seq.income === undefined) db._seq.income = 0;
+  if (db._seq.goals === undefined) db._seq.goals = 0;
+  if (db._seq.alerts === undefined) db._seq.alerts = 0;
 
   for (const inv of db.investments) {
     if (!Array.isArray(inv.transactions) || inv.transactions.length === 0) {
@@ -300,13 +304,18 @@ export const investments = {
     const user = requireAuth(db);
     validateHoldingPayload(payload);
 
+    const feesPaid = Number(payload.fees_paid) || 0;
+    const taxesPaid = Number(payload.taxes_paid) || 0;
+    const qty = Number(payload.quantity);
+    const purchasePrice = Number(payload.purchase_price);
+
     const tx = {
       id: nextId(db, "transactions"),
       type: "buy",
       date: payload.purchase_date || todayISO(),
-      quantity: Number(payload.quantity),
-      pricePerUnit: Number(payload.purchase_price),
-      fees: (Number(payload.fees_paid) || 0) + (Number(payload.taxes_paid) || 0),
+      quantity: qty,
+      pricePerUnit: purchasePrice,
+      fees: feesPaid + taxesPaid,
     };
 
     const row = {
@@ -316,7 +325,12 @@ export const investments = {
       name: payload.name.trim(),
       identifier: payload.identifier || "",
       unit: ASSET_TYPES[payload.asset_type]?.unitLabel || "units",
-      current_price: payload.current_price !== "" && payload.current_price != null ? Number(payload.current_price) : Number(payload.purchase_price),
+      quantity: qty,
+      purchase_price: purchasePrice,
+      purchase_date: payload.purchase_date || todayISO(),
+      fees_paid: feesPaid,
+      taxes_paid: taxesPaid,
+      current_price: payload.current_price !== "" && payload.current_price != null ? Number(payload.current_price) : purchasePrice,
       current_price_updated_at: nowISO(),
       platform: payload.platform || "",
       notes: payload.notes || "",
@@ -344,12 +358,24 @@ export const investments = {
       row.transactions = [];
     }
 
+    if (payload.fees_paid !== undefined) row.fees_paid = Number(payload.fees_paid) || 0;
+    if (payload.taxes_paid !== undefined) row.taxes_paid = Number(payload.taxes_paid) || 0;
+    if (payload.purchase_date !== undefined) row.purchase_date = payload.purchase_date;
+
     // If holding only has 1 buy transaction and user edited quantity/price/fees/date in edit modal:
     if (row.transactions.length === 1 && row.transactions[0].type === "buy") {
       const initialTx = row.transactions[0];
-      if (payload.quantity != null) initialTx.quantity = Number(payload.quantity);
-      if (payload.purchase_price != null) initialTx.pricePerUnit = Number(payload.purchase_price);
-      if (payload.purchase_date != null) initialTx.date = payload.purchase_date;
+      if (payload.quantity != null) {
+        initialTx.quantity = Number(payload.quantity);
+        row.quantity = Number(payload.quantity);
+      }
+      if (payload.purchase_price != null) {
+        initialTx.pricePerUnit = Number(payload.purchase_price);
+        row.purchase_price = Number(payload.purchase_price);
+      }
+      if (payload.purchase_date != null) {
+        initialTx.date = payload.purchase_date;
+      }
       if (payload.fees_paid != null || payload.taxes_paid != null) {
         initialTx.fees = (Number(payload.fees_paid != null ? payload.fees_paid : row.fees_paid) || 0) +
                          (Number(payload.taxes_paid != null ? payload.taxes_paid : row.taxes_paid) || 0);
@@ -483,6 +509,59 @@ export const investments = {
     return delay(updated);
   },
 
+  async addIncome(id, { type, date, amount, notes }) {
+    const db = readDB();
+    const user = requireAuth(db);
+    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
+    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
+
+    if (!type || (type !== "dividend" && type !== "interest")) {
+      throw new ApiError("VALIDATION", "Income type must be 'dividend' or 'interest'.");
+    }
+    const amt = Number(amount);
+    if (!amt || amt <= 0) {
+      throw new ApiError("VALIDATION", "Income amount must be greater than zero.");
+    }
+
+    if (!Array.isArray(row.income)) {
+      row.income = [];
+    }
+
+    const incomeEntry = {
+      id: nextId(db, "income"),
+      type,
+      date: date || todayISO(),
+      amount: round2(amt),
+      notes: notes ? String(notes).trim() : "",
+    };
+
+    row.income.push(incomeEntry);
+    row.updated_at = nowISO();
+
+    writeDB(db);
+    return delay(computeHoldingMetrics(row));
+  },
+
+  async deleteIncome(id, incomeId) {
+    const db = readDB();
+    const user = requireAuth(db);
+    const row = db.investments.find((i) => i.id === id && i.user_id === user.id);
+    if (!row) throw new ApiError("NOT_FOUND", "Investment not found.");
+
+    if (!Array.isArray(row.income)) {
+      throw new ApiError("NOT_FOUND", "Income entry not found.");
+    }
+
+    const idx = row.income.findIndex((inc) => inc.id === incomeId);
+    if (idx === -1) throw new ApiError("NOT_FOUND", "Income entry not found.");
+
+    row.income.splice(idx, 1);
+    row.updated_at = nowISO();
+
+    writeDB(db);
+    return delay(computeHoldingMetrics(row));
+  },
+
   async remove(id) {
     const db = readDB();
     const user = requireAuth(db);
@@ -567,9 +646,23 @@ export function computeHoldingMetrics(row) {
   const investedAmount = currentQty > 0 ? (currentQty * currentAvgCost) : 0;
   const currentValue = currentQty * effectivePrice;
 
-  // Absolute return is unrealized return on open shares + realized gains on closed shares
+  // Process income (dividends and interest)
+  const incomeEntries = Array.isArray(row.income)
+    ? [...row.income].sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+    : [];
+  let totalIncome = 0;
+  let totalDividends = 0;
+  let totalInterest = 0;
+  for (const inc of incomeEntries) {
+    const amt = Number(inc.amount) || 0;
+    totalIncome += amt;
+    if (inc.type === "dividend") totalDividends += amt;
+    else if (inc.type === "interest") totalInterest += amt;
+  }
+
+  // Absolute return is unrealized return on open shares + realized gains on closed shares + income received
   const unrealizedReturn = currentValue - investedAmount;
-  const absoluteReturn = unrealizedReturn + totalRealizedPnl;
+  const absoluteReturn = unrealizedReturn + totalRealizedPnl + totalIncome;
 
   const costBasisForReturn = totalBuyCost > 0 ? totalBuyCost : investedAmount;
   const percentReturn = costBasisForReturn > 0 ? (absoluteReturn / costBasisForReturn) * 100 : 0;
@@ -586,6 +679,13 @@ export function computeHoldingMetrics(row) {
       cashflows.push({ amount: +(q * p - f), date: tx.date });
     }
   }
+  // Dividends and interest count as positive cash inflows at their dates
+  for (const inc of incomeEntries) {
+    const amt = Number(inc.amount) || 0;
+    if (amt > 0) {
+      cashflows.push({ amount: +amt, date: inc.date || todayISO() });
+    }
+  }
   if (currentQty > 0 && currentValue > 0) {
     cashflows.push({ amount: currentValue, date: todayISO() });
   }
@@ -596,10 +696,10 @@ export function computeHoldingMetrics(row) {
   let cagr = null;
   const buys = txs.filter((t) => t.type === "buy");
   const sells = txs.filter((t) => t.type === "sell");
-  if (buys.length === 1 && sells.length === 0 && currentQty > 0) {
+  if (buys.length === 1 && sells.length === 0 && currentQty > 0 && incomeEntries.length === 0) {
     const initialCost = (Number(buys[0].quantity) * Number(buys[0].pricePerUnit)) + (Number(buys[0].fees) || 0);
     cagr = calculateCAGR(initialCost, currentValue, buys[0].date, todayISO());
-  } else if (buys.length === 1 && sells.length === 1 && currentQty === 0) {
+  } else if (buys.length === 1 && sells.length === 1 && currentQty === 0 && incomeEntries.length === 0) {
     const initialCost = (Number(buys[0].quantity) * Number(buys[0].pricePerUnit)) + (Number(buys[0].fees) || 0);
     const finalProceeds = (Number(sells[0].quantity) * Number(sells[0].pricePerUnit)) - (Number(sells[0].fees) || 0);
     cagr = calculateCAGR(initialCost, finalProceeds, buys[0].date, sells[0].date);
@@ -616,6 +716,10 @@ export function computeHoldingMetrics(row) {
     realized_gain: round2(totalRealizedPnl),
     absolute_return: round2(absoluteReturn),
     percent_return: round2(percentReturn),
+    total_income: round2(totalIncome),
+    total_dividends: round2(totalDividends),
+    total_interest: round2(totalInterest),
+    income: incomeEntries,
     xirr: xirr != null ? round2(xirr) : null,
     cagr: cagr != null ? round2(cagr) : null,
     status,
@@ -638,13 +742,27 @@ export const analytics = {
       (acc, r) => {
         acc.invested += r.invested_amount;
         acc.current += r.current_value;
-        acc.fees += r.fees_paid || 0;
-        acc.taxes += r.taxes_paid || 0;
-        acc.absolute_return += r.absolute_return;
         return acc;
       },
-      { invested: 0, current: 0, fees: 0, taxes: 0, absolute_return: 0 }
+      { invested: 0, current: 0 }
     );
+
+    let totalFees = 0;
+    let totalTaxes = 0;
+    let totalIncome = 0;
+    let totalDividends = 0;
+    let totalInterest = 0;
+    let combinedAbsoluteReturn = 0;
+
+    for (const h of allUserHoldings) {
+      const hm = computeHoldingMetrics(h);
+      totalFees += hm.fees_paid || 0;
+      totalTaxes += hm.taxes_paid || 0;
+      totalIncome += hm.total_income || 0;
+      totalDividends += hm.total_dividends || 0;
+      totalInterest += hm.total_interest || 0;
+      combinedAbsoluteReturn += hm.absolute_return || 0;
+    }
 
     // Build portfolio cashflows across all holdings
     const portfolioCashflows = [];
@@ -660,22 +778,32 @@ export const analytics = {
           portfolioCashflows.push({ amount: +(q * p - f), date: tx.date });
         }
       }
+      const incs = Array.isArray(h.income) ? h.income : [];
+      for (const inc of incs) {
+        const amt = Number(inc.amount) || 0;
+        if (amt > 0) {
+          portfolioCashflows.push({ amount: +amt, date: inc.date || todayISO() });
+        }
+      }
     }
     if (totals.current > 0) {
       portfolioCashflows.push({ amount: totals.current, date: todayISO() });
     }
 
     const portfolioXirr = calculateXIRR(portfolioCashflows);
-    const percentReturn = totals.invested > 0 ? (totals.absolute_return / totals.invested) * 100 : 0;
+    const percentReturn = totals.invested > 0 ? (combinedAbsoluteReturn / totals.invested) * 100 : 0;
 
     return delay({
       total_invested: round2(totals.invested),
       total_current_value: round2(totals.current),
-      absolute_return: round2(totals.absolute_return),
+      absolute_return: round2(combinedAbsoluteReturn),
       percent_return: round2(percentReturn),
       portfolio_xirr: portfolioXirr != null ? round2(portfolioXirr) : null,
-      total_fees: round2(totals.fees),
-      total_taxes: round2(totals.taxes),
+      total_fees: round2(totalFees),
+      total_taxes: round2(totalTaxes),
+      total_income: round2(totalIncome),
+      total_dividends: round2(totalDividends),
+      total_interest: round2(totalInterest),
       holdings_count: activeRows.length,
     });
   },
@@ -726,6 +854,534 @@ export const analytics = {
       losers: sorted.filter((r) => r.percent_return < 0).slice(-limit).reverse(),
     });
   },
+
+  async getTargetAllocation() {
+    const db = readDB();
+    const user = requireAuth(db);
+    const rows = await investments.list({ status: "active" });
+    const activeTypes = Array.from(new Set(rows.map((r) => r.asset_type)));
+
+    if (user.target_allocation && typeof user.target_allocation === "object" && Object.keys(user.target_allocation).length > 0) {
+      return delay({ ...user.target_allocation });
+    }
+
+    // Sensible default based on holdings or tracked types
+    const defaultMap = {};
+    if (activeTypes.includes("stocks") && activeTypes.includes("mutual_fund")) {
+      defaultMap["stocks"] = 40;
+      defaultMap["mutual_fund"] = 30;
+      if (activeTypes.includes("gold")) defaultMap["gold"] = 15;
+      if (activeTypes.includes("fixed_deposit")) defaultMap["fixed_deposit"] = 15;
+      if (activeTypes.includes("crypto")) defaultMap["crypto"] = 5;
+      const currentSum = Object.values(defaultMap).reduce((a, b) => a + b, 0);
+      if (currentSum !== 100 && defaultMap["stocks"]) {
+        defaultMap["stocks"] += (100 - currentSum);
+      }
+    } else if (activeTypes.length > 0) {
+      const share = Math.floor(100 / activeTypes.length);
+      activeTypes.forEach((t, idx) => {
+        defaultMap[t] = idx === 0 ? 100 - share * (activeTypes.length - 1) : share;
+      });
+    } else {
+      defaultMap["stocks"] = 50;
+      defaultMap["mutual_fund"] = 25;
+      defaultMap["gold"] = 15;
+      defaultMap["fixed_deposit"] = 10;
+    }
+    return delay(defaultMap);
+  },
+
+  async saveTargetAllocation(targetMap) {
+    const db = readDB();
+    const user = requireAuth(db);
+
+    let total = 0;
+    const cleanMap = {};
+    for (const [key, val] of Object.entries(targetMap)) {
+      const num = Math.max(0, Number(val) || 0);
+      cleanMap[key] = round2(num);
+      total += num;
+    }
+
+    if (Math.abs(total - 100) > 0.5) {
+      throw new ApiError("VALIDATION", `Target allocations must sum to 100% (currently ${round2(total)}%).`);
+    }
+
+    // Adjust slight float rounding difference to first key
+    const diff = round2(100 - total);
+    const firstKey = Object.keys(cleanMap)[0];
+    if (diff !== 0 && firstKey) {
+      cleanMap[firstKey] = round2(cleanMap[firstKey] + diff);
+    }
+
+    user.target_allocation = cleanMap;
+    writeDB(db);
+    return delay(cleanMap);
+  },
+
+  async getRebalancingPlan() {
+    const rows = await investments.list({ status: "active" });
+    const targetMap = await analytics.getTargetAllocation();
+
+    const currentByAsset = {};
+    let totalPortfolioValue = 0;
+    for (const r of rows) {
+      currentByAsset[r.asset_type] = (currentByAsset[r.asset_type] || 0) + (r.current_value || 0);
+      totalPortfolioValue += (r.current_value || 0);
+    }
+
+    const allAssetTypes = Array.from(new Set([...Object.keys(targetMap), ...Object.keys(currentByAsset)]));
+
+    const items = allAssetTypes.map((type) => {
+      const currentValue = round2(currentByAsset[type] || 0);
+      const currentPercent = totalPortfolioValue > 0 ? round2((currentValue / totalPortfolioValue) * 100) : 0;
+      const targetPercent = round2(Number(targetMap[type]) || 0);
+      const targetValue = round2(totalPortfolioValue * (targetPercent / 100));
+      const diffPercent = round2(currentPercent - targetPercent);
+      const diffValue = round2(currentValue - targetValue);
+
+      let status = "balanced";
+      let action = "hold";
+      if (diffPercent > 1.0) {
+        status = "overweight";
+        action = "trim";
+      } else if (diffPercent < -1.0) {
+        status = "underweight";
+        action = "buy";
+      }
+
+      return {
+        asset_type: type,
+        label: ASSET_TYPES[type]?.label || type,
+        current_value: currentValue,
+        current_percent: currentPercent,
+        target_percent: targetPercent,
+        target_value: targetValue,
+        diff_percent: diffPercent,
+        diff_value: diffValue,
+        status,
+        action,
+        suggested_amount: round2(Math.abs(diffValue)),
+      };
+    });
+
+    const totalDrift = round2(items.reduce((acc, it) => acc + Math.abs(it.diff_percent), 0) / 2);
+    const healthScore = Math.max(0, Math.min(100, Math.round(100 - totalDrift * 1.5)));
+
+    let healthStatus = "Optimal Alignment";
+    if (healthScore < 70) healthStatus = "High Rebalance Urgency";
+    else if (healthScore < 85) healthStatus = "Moderate Portfolio Drift";
+
+    const suggestions = [];
+    const buys = items.filter((it) => it.action === "buy" && it.suggested_amount > 50).sort((a, b) => b.suggested_amount - a.suggested_amount);
+    const trims = items.filter((it) => it.action === "trim" && it.suggested_amount > 50).sort((a, b) => b.suggested_amount - a.suggested_amount);
+
+    for (const b of buys) {
+      suggestions.push({
+        type: "buy",
+        asset_type: b.asset_type,
+        label: b.label,
+        amount: b.suggested_amount,
+        target_percent: b.target_percent,
+        current_percent: b.current_percent,
+      });
+    }
+    for (const t of trims) {
+      suggestions.push({
+        type: "trim",
+        asset_type: t.asset_type,
+        label: t.label,
+        amount: t.suggested_amount,
+        target_percent: t.target_percent,
+        current_percent: t.current_percent,
+      });
+    }
+
+    return delay({
+      total_portfolio_value: round2(totalPortfolioValue),
+      items: items.sort((a, b) => b.current_value - a.current_value),
+      health_score: healthScore,
+      health_status: healthStatus,
+      total_drift: totalDrift,
+      suggestions,
+      target_allocation: targetMap,
+    });
+  },
+};
+
+// ── GOALS ──────────────────────────────────────────────────────────────────
+
+export const goals = {
+  async list() {
+    const db = readDB();
+    const user = requireAuth(db);
+    const userGoals = (db.goals || [])
+      .filter((g) => g.user_id === user.id)
+      .sort((a, b) => {
+        if (!a.target_date) return 1;
+        if (!b.target_date) return -1;
+        return a.target_date.localeCompare(b.target_date);
+      });
+    return delay(userGoals);
+  },
+
+  async create(payload) {
+    const db = readDB();
+    const user = requireAuth(db);
+    const name = String(payload.name || "").trim();
+    const targetAmount = Number(payload.target_amount);
+    if (!name) throw new ApiError("VALIDATION", "Goal name is required.");
+    if (!targetAmount || targetAmount <= 0) throw new ApiError("VALIDATION", "Target amount must be greater than zero.");
+
+    const row = {
+      id: nextId(db, "goals"),
+      user_id: user.id,
+      name,
+      target_amount: round2(targetAmount),
+      target_date: payload.target_date || null,
+      notes: payload.notes ? String(payload.notes).trim() : "",
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    };
+
+    if (!Array.isArray(db.goals)) db.goals = [];
+    db.goals.push(row);
+    writeDB(db);
+    return delay(row);
+  },
+
+  async update(id, payload) {
+    const db = readDB();
+    const user = requireAuth(db);
+    const row = (db.goals || []).find((g) => g.id === id && g.user_id === user.id);
+    if (!row) throw new ApiError("NOT_FOUND", "Goal not found.");
+
+    if (payload.name !== undefined) {
+      const name = String(payload.name || "").trim();
+      if (!name) throw new ApiError("VALIDATION", "Goal name cannot be empty.");
+      row.name = name;
+    }
+    if (payload.target_amount !== undefined) {
+      const amt = Number(payload.target_amount);
+      if (!amt || amt <= 0) throw new ApiError("VALIDATION", "Target amount must be greater than zero.");
+      row.target_amount = round2(amt);
+    }
+    if (payload.target_date !== undefined) {
+      row.target_date = payload.target_date || null;
+    }
+    if (payload.notes !== undefined) {
+      row.notes = String(payload.notes || "").trim();
+    }
+    row.updated_at = nowISO();
+    writeDB(db);
+    return delay(row);
+  },
+
+  async delete(id) {
+    const db = readDB();
+    const user = requireAuth(db);
+    const idx = (db.goals || []).findIndex((g) => g.id === id && g.user_id === user.id);
+    if (idx === -1) throw new ApiError("NOT_FOUND", "Goal not found.");
+    db.goals.splice(idx, 1);
+    writeDB(db);
+    return delay({ success: true });
+  },
+
+  async getSummary() {
+    const db = readDB();
+    const user = requireAuth(db);
+    const userGoals = (db.goals || [])
+      .filter((g) => g.user_id === user.id)
+      .sort((a, b) => {
+        if (!a.target_date) return 1;
+        if (!b.target_date) return -1;
+        return a.target_date.localeCompare(b.target_date);
+      });
+
+    // Compute current total portfolio value from active holdings
+    const activeHoldings = db.investments.filter((i) => i.user_id === user.id && i.status === "active");
+    let totalPortfolioValue = 0;
+    let totalInvested = 0;
+    for (const h of activeHoldings) {
+      const m = computeHoldingMetrics(h);
+      totalPortfolioValue += m.current_value;
+      totalInvested += m.invested_amount;
+    }
+
+    const portfolioReturnPct = totalInvested > 0 ? ((totalPortfolioValue - totalInvested) / totalInvested) * 100 : 0;
+
+    const enrichedGoals = userGoals.map((g) => {
+      const targetAmount = Number(g.target_amount) || 0;
+      const currentAmount = round2(totalPortfolioValue);
+      const percentComplete = targetAmount > 0 ? Math.min(100, round2((currentAmount / targetAmount) * 100)) : 0;
+      const remainingAmount = Math.max(0, round2(targetAmount - currentAmount));
+      const isReached = currentAmount >= targetAmount;
+
+      // Projection calculation
+      let projection = null;
+      if (isReached) {
+        projection = {
+          status: "achieved",
+          message: "Target achieved! Your portfolio currently meets this goal.",
+          projectedDate: null,
+          isOnTrack: true,
+        };
+      } else {
+        const growthRateAnnual = portfolioReturnPct > 2 ? Math.min(portfolioReturnPct / 100, 0.35) : 0.10;
+        if (currentAmount > 0 && targetAmount > currentAmount) {
+          const yearsNeeded = Math.log(targetAmount / currentAmount) / Math.log(1 + growthRateAnnual);
+          if (yearsNeeded > 0 && Number.isFinite(yearsNeeded)) {
+            const projectedDateObj = new Date(Date.now() + yearsNeeded * 365.25 * 86400 * 1000);
+            const projYearMonth = projectedDateObj.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+
+            let isOnTrack = true;
+            let note = "";
+            if (g.target_date) {
+              const targetDateMs = new Date(g.target_date).getTime();
+              const projMs = projectedDateObj.getTime();
+              if (projMs <= targetDateMs) {
+                const monthsAhead = Math.round((targetDateMs - projMs) / (30.4 * 86400 * 1000));
+                isOnTrack = true;
+                note = monthsAhead > 0
+                  ? `On track — projected to reach by ${projYearMonth} (~${monthsAhead} mo. ahead of schedule)`
+                  : `On track — projected to reach by ${projYearMonth}`;
+              } else {
+                const monthsBehind = Math.round((projMs - targetDateMs) / (30.4 * 86400 * 1000));
+                isOnTrack = false;
+                note = `Behind schedule at current pace — projected by ${projYearMonth} (~${monthsBehind} mo. after target)`;
+              }
+            } else {
+              note = `At current ~${(growthRateAnnual * 100).toFixed(1)}% p.a. trajectory, projected to reach by ${projYearMonth}`;
+            }
+
+            projection = {
+              status: isOnTrack ? "on_track" : "behind",
+              message: note,
+              projectedDate: projYearMonth,
+              growthRateAnnual: round2(growthRateAnnual * 100),
+              isOnTrack,
+            };
+          }
+        }
+
+        if (!projection) {
+          projection = {
+            status: "planning",
+            message: g.target_date ? `Target date: ${g.target_date}` : "Add regular contributions to accelerate this goal.",
+            projectedDate: null,
+            isOnTrack: true,
+          };
+        }
+      }
+
+      return {
+        ...g,
+        current_amount: currentAmount,
+        percent_complete: percentComplete,
+        remaining_amount: remainingAmount,
+        is_reached: isReached,
+        projection,
+      };
+    });
+
+    const primaryGoal = enrichedGoals.find((g) => !g.is_reached) || enrichedGoals[0] || null;
+
+    return delay({
+      goals: enrichedGoals,
+      primary_goal: primaryGoal,
+      total_portfolio_value: round2(totalPortfolioValue),
+      goals_count: enrichedGoals.length,
+      achieved_count: enrichedGoals.filter((g) => g.is_reached).length,
+    });
+  },
+};
+
+// ── ALERTS ─────────────────────────────────────────────────────────────────
+
+export const alerts = {
+  async list(investmentId = null) {
+    const db = readDB();
+    const user = requireAuth(db);
+    if (!Array.isArray(db.alerts)) db.alerts = [];
+
+    let userAlerts = db.alerts.filter((a) => a.user_id === user.id);
+    if (investmentId) {
+      userAlerts = userAlerts.filter((a) => a.investment_id === investmentId);
+    }
+
+    let modified = false;
+    const enriched = userAlerts.map((a) => {
+      const holding = db.investments.find((i) => i.id === a.investment_id && i.user_id === user.id);
+      const currentPrice = holding ? (Number(holding.current_price) || 0) : 0;
+      const targetPrice = Number(a.target_price) || 0;
+
+      let isTriggered = false;
+      if (holding && holding.status === "active" && a.is_active !== false) {
+        if (a.condition === "above" && currentPrice >= targetPrice) {
+          isTriggered = true;
+        } else if (a.condition === "below" && currentPrice <= targetPrice) {
+          isTriggered = true;
+        }
+      }
+
+      if (a.is_triggered !== isTriggered) {
+        a.is_triggered = isTriggered;
+        if (isTriggered && !a.triggered_at) {
+          a.triggered_at = nowISO();
+        }
+        modified = true;
+      }
+
+      return {
+        ...a,
+        is_triggered: isTriggered,
+        holding_name: holding ? holding.name : "Unknown holding",
+        identifier: holding ? holding.identifier : "",
+        asset_type: holding ? holding.asset_type : "stocks",
+        unit: holding ? holding.unit : "units",
+        current_price: currentPrice,
+        currency: user.currency || "INR",
+      };
+    });
+
+    if (modified) {
+      writeDB(db);
+    }
+
+    return delay(
+      enriched.sort((a, b) => {
+        // Triggered and non-dismissed first
+        const aActiveTrigger = a.is_triggered && !a.dismissed;
+        const bActiveTrigger = b.is_triggered && !b.dismissed;
+        if (aActiveTrigger && !bActiveTrigger) return -1;
+        if (!aActiveTrigger && bActiveTrigger) return 1;
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      })
+    );
+  },
+
+  async getTriggered() {
+    const all = await alerts.list();
+    return all.filter((a) => a.is_triggered && !a.dismissed && a.is_active !== false);
+  },
+
+  async create({ investment_id, target_price, condition, notes }) {
+    const db = readDB();
+    const user = requireAuth(db);
+    const holding = db.investments.find((i) => i.id === investment_id && i.user_id === user.id);
+    if (!holding) throw new ApiError("NOT_FOUND", "Holding not found.");
+
+    const price = Number(target_price);
+    if (!price || price <= 0) throw new ApiError("VALIDATION", "Target price must be greater than zero.");
+    if (!["above", "below"].includes(condition)) throw new ApiError("VALIDATION", "Condition must be 'above' or 'below'.");
+
+    const currentPrice = Number(holding.current_price) || 0;
+    const isTriggered = (condition === "above" && currentPrice >= price) || (condition === "below" && currentPrice <= price);
+
+    const row = {
+      id: nextId(db, "alerts"),
+      user_id: user.id,
+      investment_id: holding.id,
+      target_price: round2(price),
+      condition,
+      notes: notes ? String(notes).trim() : "",
+      is_active: true,
+      is_triggered: isTriggered,
+      triggered_at: isTriggered ? nowISO() : null,
+      dismissed: false,
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    };
+
+    if (!Array.isArray(db.alerts)) db.alerts = [];
+    db.alerts.push(row);
+    writeDB(db);
+
+    return delay({
+      ...row,
+      holding_name: holding.name,
+      identifier: holding.identifier,
+      asset_type: holding.asset_type,
+      current_price: currentPrice,
+      currency: user.currency || "INR",
+    });
+  },
+
+  async update(id, payload) {
+    const db = readDB();
+    const user = requireAuth(db);
+    if (!Array.isArray(db.alerts)) db.alerts = [];
+    const row = db.alerts.find((a) => a.id === id && a.user_id === user.id);
+    if (!row) throw new ApiError("NOT_FOUND", "Alert not found.");
+
+    if (payload.target_price !== undefined) {
+      const price = Number(payload.target_price);
+      if (!price || price <= 0) throw new ApiError("VALIDATION", "Target price must be greater than zero.");
+      row.target_price = round2(price);
+      row.dismissed = false;
+    }
+    if (payload.condition !== undefined) {
+      if (!["above", "below"].includes(payload.condition)) throw new ApiError("VALIDATION", "Condition must be 'above' or 'below'.");
+      row.condition = payload.condition;
+      row.dismissed = false;
+    }
+    if (payload.is_active !== undefined) {
+      row.is_active = Boolean(payload.is_active);
+    }
+    if (payload.notes !== undefined) {
+      row.notes = String(payload.notes || "").trim();
+    }
+    row.updated_at = nowISO();
+    writeDB(db);
+
+    const holding = db.investments.find((i) => i.id === row.investment_id);
+    return delay({
+      ...row,
+      holding_name: holding?.name || "",
+      identifier: holding?.identifier || "",
+      current_price: holding?.current_price || 0,
+      currency: user.currency || "INR",
+    });
+  },
+
+  async dismiss(id) {
+    const db = readDB();
+    const user = requireAuth(db);
+    if (!Array.isArray(db.alerts)) db.alerts = [];
+    const row = db.alerts.find((a) => a.id === id && a.user_id === user.id);
+    if (!row) throw new ApiError("NOT_FOUND", "Alert not found.");
+    row.dismissed = true;
+    row.updated_at = nowISO();
+    writeDB(db);
+    return delay({ success: true, id });
+  },
+
+  async dismissAll() {
+    const db = readDB();
+    const user = requireAuth(db);
+    if (!Array.isArray(db.alerts)) db.alerts = [];
+    let count = 0;
+    for (const a of db.alerts) {
+      if (a.user_id === user.id && a.is_triggered && !a.dismissed) {
+        a.dismissed = true;
+        a.updated_at = nowISO();
+        count++;
+      }
+    }
+    writeDB(db);
+    return delay({ success: true, count });
+  },
+
+  async delete(id) {
+    const db = readDB();
+    const user = requireAuth(db);
+    if (!Array.isArray(db.alerts)) db.alerts = [];
+    const idx = db.alerts.findIndex((a) => a.id === id && a.user_id === user.id);
+    if (idx === -1) throw new ApiError("NOT_FOUND", "Alert not found.");
+    db.alerts.splice(idx, 1);
+    writeDB(db);
+    return delay({ success: true });
+  },
 };
 
 // ── DEMO seed ─────────────────────────────────────────────────────────────
@@ -745,6 +1401,25 @@ export async function seedDemoData(userId) {
 
   for (const s of sample) {
     const txId = nextId(db, "transactions");
+    const sampleIncome = [];
+    if (s.identifier === "HDFCBANK") {
+      sampleIncome.push({
+        id: nextId(db, "income"),
+        type: "dividend",
+        date: "2023-08-16",
+        amount: 475,
+        notes: "Interim dividend ₹19/share",
+      });
+    } else if (s.identifier === "FD-2231") {
+      sampleIncome.push({
+        id: nextId(db, "income"),
+        type: "interest",
+        date: "2024-03-01",
+        amount: 18125,
+        notes: "Annual cumulative interest credited",
+      });
+    }
+
     db.investments.push({
       id: nextId(db, "investments"),
       user_id: userId,
@@ -770,9 +1445,68 @@ export async function seedDemoData(userId) {
           fees: (s.fees_paid || 0) + (s.taxes_paid || 0),
         },
       ],
+      income: sampleIncome,
       created_at: nowISO(),
       updated_at: nowISO(),
     });
   }
+
+  if (!db.goals) db.goals = [];
+  if (!db.goals.some((g) => g.user_id === userId)) {
+    db.goals.push(
+      {
+        id: nextId(db, "goals"),
+        user_id: userId,
+        name: "Emergency Fund & Runway",
+        target_amount: 1000000,
+        target_date: "2027-06-30",
+        notes: "6 to 12 months liquid expenses + safety margin.",
+        created_at: nowISO(),
+        updated_at: nowISO(),
+      },
+      {
+        id: nextId(db, "goals"),
+        user_id: userId,
+        name: "Home Down Payment",
+        target_amount: 2500000,
+        target_date: "2028-12-31",
+        notes: "Target down payment for real estate purchase.",
+        created_at: nowISO(),
+        updated_at: nowISO(),
+      }
+    );
+  }
+
+  if (!db.alerts) db.alerts = [];
+  if (!db.alerts.some((a) => a.user_id === userId)) {
+    const hdfc = db.investments.find((i) => i.user_id === userId && i.identifier === "HDFCBANK");
+    if (hdfc) {
+      db.alerts.push({
+        id: nextId(db, "alerts"),
+        user_id: userId,
+        investment_id: hdfc.id,
+        target_price: 1700,
+        condition: "above",
+        notes: "Target profit booking zone",
+        is_active: true,
+        is_triggered: false,
+        triggered_at: null,
+        dismissed: false,
+        created_at: nowISO(),
+        updated_at: nowISO(),
+      });
+    }
+  }
+
+  const u = db.users.find((user) => user.id === userId);
+  if (u && !u.target_allocation) {
+    u.target_allocation = {
+      stocks: 45,
+      mutual_fund: 25,
+      fixed_deposit: 15,
+      gold: 15,
+    };
+  }
+
   writeDB(db);
 }

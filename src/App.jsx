@@ -5,6 +5,7 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/Dashboard";
 import Holdings from "./pages/Holdings";
 import Analytics from "./pages/Analytics";
+import Goals from "./pages/Goals";
 
 /** Redirect unauthenticated users to /login */
 function ProtectedRoute({ children }) {
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/holdings" element={<ProtectedRoute><Holdings /></ProtectedRoute>} />
         <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
+        <Route path="/goals" element={<ProtectedRoute><Goals /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>

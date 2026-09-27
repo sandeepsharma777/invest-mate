@@ -1,0 +1,8 @@
+{
+  "name": "InvestMate",
+  "description": "Your unified, manual-entry investment ledger.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

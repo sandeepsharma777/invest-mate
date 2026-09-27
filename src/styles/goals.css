@@ -1,0 +1,219 @@
+/* =========================================================
+   InvestMate — Goals CSS
+   ========================================================= */
+
+.goals-hero {
+  margin-bottom: var(--sp-5);
+}
+
+.goals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: var(--sp-5);
+  margin-top: var(--sp-4);
+  min-width: 0;
+  max-width: 100%;
+}
+@media (max-width: 640px) {
+  .goals-grid {
+    grid-template-columns: 1fr;
+    gap: var(--sp-4);
+  }
+}
+
+.goal-card {
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  position: relative;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.goal-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.4);
+}
+
+.goal-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.goal-card__title-group {
+  flex: 1;
+  min-width: 0;
+}
+
+.goal-card__title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--paper-ink);
+  margin: 0 0 4px 0;
+  line-height: 1.25;
+}
+
+.goal-card__date-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-2xs);
+  color: var(--paper-ink-soft);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.goal-card__figures {
+  background: #fbf9f5;
+  border: 1px dashed var(--paper-line);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.goal-figure {
+  display: flex;
+  flex-direction: column;
+}
+.goal-figure--target {
+  text-align: right;
+}
+
+.goal-figure__label {
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--paper-ink-soft);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.goal-figure__val {
+  font-size: var(--fs-lg);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--paper-ink);
+}
+
+/* Progress bar container */
+.goal-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.goal-progress__labels {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--fs-xs);
+}
+
+.goal-progress__pct {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--gold-600);
+  font-size: var(--fs-sm);
+}
+
+.goal-progress__rem {
+  color: var(--paper-ink-soft);
+  font-size: var(--fs-2xs);
+}
+
+.goal-progress-track {
+  width: 100%;
+  height: 10px;
+  background: var(--paper-100);
+  border: 1px solid var(--paper-line);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.goal-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold-500), #e5b95b);
+  border-radius: 999px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.goal-progress-fill.is-achieved {
+  background: linear-gradient(90deg, var(--jade-600), #22c55e);
+}
+
+/* Trajectory projection box */
+.goal-projection {
+  background: var(--paper-000);
+  border: 1px solid var(--paper-line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: var(--fs-xs);
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  color: var(--paper-ink);
+  line-height: 1.45;
+}
+
+.goal-projection__icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  margin-top: 1px;
+}
+
+.goal-projection__text {
+  flex: 1;
+}
+
+.goal-projection.is-achieved {
+  background: rgba(46, 125, 90, 0.08);
+  border-color: rgba(46, 125, 90, 0.25);
+  color: var(--jade-700);
+}
+
+.goal-projection.is-on-track {
+  background: rgba(201, 162, 75, 0.08);
+  border-color: rgba(201, 162, 75, 0.3);
+}
+
+.goal-projection.is-behind {
+  background: rgba(184, 51, 42, 0.06);
+  border-color: rgba(184, 51, 42, 0.2);
+}
+
+.goal-card__notes {
+  font-size: var(--fs-xs);
+  color: var(--paper-ink-soft);
+  margin: 0;
+  line-height: 1.4;
+  border-top: 1px dashed var(--paper-line);
+  padding-top: var(--sp-3);
+}
+
+.goal-empty-card {
+  border: 2px dashed var(--paper-line);
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6) var(--sp-4);
+  text-align: center;
+  cursor: pointer;
+  min-height: 240px;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.goal-empty-card:hover {
+  border-color: var(--gold-500);
+  background: rgba(201, 162, 75, 0.04);
+}
+.goal-empty-card svg {
+  color: var(--gold-500);
+  margin-bottom: var(--sp-3);
+}

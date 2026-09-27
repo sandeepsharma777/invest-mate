@@ -1,17 +1,30 @@
-import { useState, useEffect, useCallback, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import { useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Seal } from "../components/Seal";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { investments, ASSET_TYPES } from "../lib/db";
-import { formatCurrency, formatPercent, formatDate, todayISO, debounce } from "../lib/utils";
+import { investments, alerts, ASSET_TYPES } from "../lib/db";
+import { formatCurrency, formatPercent, formatDate, todayISO, debounce, getCurrencySymbol } from "../lib/utils";
+import AlertsBanner from "../components/AlertsBanner";
+import AlertsModal from "../components/AlertsModal";
 import "../styles/holdings.css";
 
 const SELL_SVG = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>;
 const EDIT_SVG = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>;
 const DEL_SVG  = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6h16z"/></svg>;
 const PLUS_SVG = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>;
+const INCOME_SVG = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v10M15 9.5a2.5 2.5 0 00-5 0c0 3 5 2 5 5a2.5 2.5 0 01-5 0" />
+  </svg>
+);
+const ALERT_SVG = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
+  </svg>
+);
 
 const EMPTY_FORM = {
   asset_type: "", name: "", identifier: "", quantity: "", platform: "",
@@ -58,6 +71,7 @@ export default function Holdings() {
 
   const trackedTypes = user?.tracked_asset_types?.length ? user.tracked_asset_types : Object.keys(ASSET_TYPES);
   const currency = user?.currency || "INR";
+  const currencySymbol = getCurrencySymbol(currency);
 
   // Data
   const [allRows, setAllRows] = useState([]);
@@ -92,17 +106,82 @@ export default function Holdings() {
   const [deleteModal, setDeleteModal] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
 
+  // Delete transaction modal
+  const [deleteTxTarget, setDeleteTxTarget] = useState(null);
+
+  // Record income modal
+  const [incomeModal, setIncomeModal] = useState(false);
+  const [incomeHolding, setIncomeHolding] = useState(null);
+  const [incomeForm, setIncomeForm] = useState({ type: "dividend", amount: "", date: todayISO(), notes: "" });
+  const [savingIncome, setSavingIncome] = useState(false);
+  const [deleteIncomeTarget, setDeleteIncomeTarget] = useState(null);
+
+  // Price alerts
+  const [triggeredAlerts, setTriggeredAlerts] = useState([]);
+  const [allAlerts, setAllAlerts] = useState([]);
+  const [alertsModalOpen, setAlertsModalOpen] = useState(false);
+  const [presetAlertHolding, setPresetAlertHolding] = useState(null);
+
   const refresh = useCallback(async () => {
-    const [active, sold] = await Promise.all([
+    const [active, sold, trAlerts, aList] = await Promise.all([
       investments.list({ status: "active" }),
       investments.list({ status: "sold" }),
+      alerts.getTriggered(),
+      alerts.list(),
     ]);
     setAllRows([...active, ...sold]);
+    setTriggeredAlerts(trAlerts || []);
+    setAllAlerts(aList || []);
   }, []);
 
   useEffect(() => {
     refresh().catch((err) => toast(err.message || "Couldn't load holdings.", "error"));
   }, []);
+
+  // Close modals on Escape key
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === "Escape") {
+        setModalOpen(false);
+        setSellModal(false);
+        setTxModal(false);
+        setDeleteModal(false);
+        setDeleteTxTarget(null);
+        setIncomeModal(false);
+        setDeleteIncomeTarget(null);
+        setAlertsModalOpen(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  function openSetAlertModal(holding = null) {
+    setPresetAlertHolding(holding?.id || null);
+    setAlertsModalOpen(true);
+  }
+
+  async function handleDismissAlert(alertId) {
+    try {
+      await alerts.dismiss(alertId);
+      setTriggeredAlerts((prev) => prev.filter((a) => a.id !== alertId));
+      toast("Alert notification dismissed", "info");
+      refresh();
+    } catch (err) {
+      toast(err.message || "Failed to dismiss alert", "error");
+    }
+  }
+
+  async function handleDismissAllAlerts() {
+    try {
+      await alerts.dismissAll();
+      setTriggeredAlerts([]);
+      toast("All alerts dismissed", "info");
+      refresh();
+    } catch (err) {
+      toast(err.message || "Failed to dismiss alerts", "error");
+    }
+  }
 
   // Deep-link: ?add=1&type=gold
   useEffect(() => {
@@ -280,14 +359,60 @@ export default function Holdings() {
     }
   }
 
-  async function handleDeleteTx(holdingId, txId) {
-    if (!window.confirm("Delete this transaction? The holding's units and cost basis will be recalculated.")) return;
+  async function confirmDeleteTx() {
+    if (!deleteTxTarget) return;
     try {
-      await investments.deleteTransaction(holdingId, txId);
+      await investments.deleteTransaction(deleteTxTarget.holdingId, deleteTxTarget.txId);
+      setDeleteTxTarget(null);
       toast("Transaction deleted.", "success");
       refresh();
     } catch (err) {
       toast(err.message || "Couldn't delete transaction.", "error");
+    }
+  }
+
+  // ── Record Income modal ────────────────────────────────────────────────
+  function openIncomeModal(row) {
+    setIncomeHolding(row);
+    setIncomeForm({
+      type: row.asset_type === "fixed_deposit" ? "interest" : "dividend",
+      amount: "",
+      date: todayISO(),
+      notes: "",
+    });
+    setIncomeModal(true);
+  }
+
+  async function handleSaveIncome(e) {
+    e.preventDefault();
+    if (!incomeHolding) return;
+    const amt = Number(incomeForm.amount);
+    if (!amt || amt <= 0) {
+      toast("Please enter a valid amount greater than zero.", "error");
+      return;
+    }
+    setSavingIncome(true);
+    try {
+      await investments.addIncome(incomeHolding.id, incomeForm);
+      toast(`${incomeForm.type === "dividend" ? "Dividend" : "Interest"} payment recorded.`, "success");
+      setIncomeModal(false);
+      refresh();
+    } catch (err) {
+      toast(err.message || "Couldn't record income.", "error");
+    } finally {
+      setSavingIncome(false);
+    }
+  }
+
+  async function confirmDeleteIncome() {
+    if (!deleteIncomeTarget) return;
+    try {
+      await investments.deleteIncome(deleteIncomeTarget.holdingId, deleteIncomeTarget.incomeId);
+      setDeleteIncomeTarget(null);
+      toast("Income entry removed.", "success");
+      refresh();
+    } catch (err) {
+      toast(err.message || "Couldn't remove income entry.", "error");
     }
   }
 
@@ -305,7 +430,7 @@ export default function Holdings() {
     }
   }
 
-  const handleSearch = debounce((v) => setSearch(v), 200);
+  const handleSearch = useMemo(() => debounce((v) => setSearch(v), 200), []);
 
   // ── Overlay backdrop click closes modal ───────────────────────────────
   function handleOverlayClick(e, closeFn) {
@@ -331,11 +456,33 @@ export default function Holdings() {
           <h1>Holdings</h1>
           <p className="topbar__sub">Every position you've entered, tracked with granular transaction history.</p>
         </div>
-        <button className="btn btn--primary" onClick={() => openAddModal()}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
-          Add investment
-        </button>
+        <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
+          <button
+            type="button"
+            className="topbar-alert-btn"
+            title="Price Alerts"
+            onClick={() => openSetAlertModal()}
+          >
+            {ALERT_SVG}
+            {triggeredAlerts.length > 0 && (
+              <span className="topbar-alert-btn__badge">{triggeredAlerts.length}</span>
+            )}
+          </button>
+          <button className="btn btn--primary" onClick={() => openAddModal()}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+            Add investment
+          </button>
+        </div>
       </div>
+
+      {/* Triggered Price Alerts Banner */}
+      <AlertsBanner
+        triggeredAlerts={triggeredAlerts}
+        currency={currency}
+        onDismiss={handleDismissAlert}
+        onDismissAll={handleDismissAllAlerts}
+        onOpenManage={(holdingId) => openSetAlertModal({ id: holdingId })}
+      />
 
       {/* Tabs */}
       <div className="tabs" id="asset-tabs">
@@ -455,6 +602,8 @@ export default function Holdings() {
                         </td>
                         <td>
                           <div className="row-actions">
+                            <button className="icon-btn" title="Set price alert" onClick={() => openSetAlertModal(r)}>{ALERT_SVG}</button>
+                            <button className="icon-btn" title="Record income" onClick={() => openIncomeModal(r)}>{INCOME_SVG}</button>
                             <button className="icon-btn" title="Add transaction" onClick={() => openAddTxModal(r, "buy")}>{PLUS_SVG}</button>
                             {r.quantity > 0 && (
                               <button className="icon-btn" title="Sell units" onClick={() => openSellModal(r.id)}>{SELL_SVG}</button>
@@ -492,6 +641,13 @@ export default function Holdings() {
                                       Sell units
                                     </button>
                                   )}
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm btn--ghost-paper"
+                                    onClick={() => openIncomeModal(r)}
+                                  >
+                                    + Record income
+                                  </button>
                                 </div>
                               </div>
 
@@ -503,6 +659,14 @@ export default function Holdings() {
                                 )}
                                 {r.realized_gain !== 0 && (
                                   <span><strong>Realized P&amp;L:</strong> <span className={r.realized_gain >= 0 ? "text-positive" : "text-negative"}>{formatCurrency(r.realized_gain, currency)}</span></span>
+                                )}
+                                {(r.total_income || 0) > 0 && (
+                                  <span className="text-positive">
+                                    <strong>Income:</strong> {formatCurrency(r.total_income, currency)}
+                                    <span style={{ fontSize: "var(--fs-2xs)", color: "var(--paper-ink-soft)", marginLeft: 4 }}>
+                                      ({r.total_dividends > 0 ? `Div: ${formatCurrency(r.total_dividends, currency)}` : ""}{r.total_dividends > 0 && r.total_interest > 0 ? " · " : ""}{r.total_interest > 0 ? `Int: ${formatCurrency(r.total_interest, currency)}` : ""})
+                                    </span>
+                                  </span>
                                 )}
                               </div>
 
@@ -547,7 +711,7 @@ export default function Holdings() {
                                               type="button"
                                               className="icon-btn icon-btn--sm"
                                               title="Delete transaction"
-                                              onClick={() => handleDeleteTx(r.id, tx.id)}
+                                              onClick={() => setDeleteTxTarget({ holdingId: r.id, txId: tx.id })}
                                               disabled={r.transactions.length <= 1}
                                             >
                                               {DEL_SVG}
@@ -559,6 +723,123 @@ export default function Holdings() {
                                   </tbody>
                                 </table>
                               )}
+
+                              {/* Income History Section */}
+                              <div style={{ marginTop: "var(--sp-4)", borderTop: "1px dashed var(--paper-line)", paddingTop: "var(--sp-3)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--sp-2)" }}>
+                                  <div>
+                                    <h5 style={{ margin: 0, fontSize: "var(--fs-sm)", fontWeight: 700, color: "var(--paper-ink)" }}>
+                                      Dividends &amp; Interest Received
+                                    </h5>
+                                    <p style={{ margin: "2px 0 0", fontSize: "var(--fs-2xs)", color: "var(--paper-ink-soft)" }}>
+                                      {r.income?.length || 0} payment{r.income?.length === 1 ? "" : "s"} logged · Total {formatCurrency(r.total_income || 0, currency)}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm btn--ghost-paper"
+                                    onClick={() => openIncomeModal(r)}
+                                  >
+                                    + Record income
+                                  </button>
+                                </div>
+
+                                {(!r.income || r.income.length === 0) ? (
+                                  <p style={{ color: "var(--paper-ink-soft)", fontSize: "var(--fs-xs)", margin: "var(--sp-2) 0" }}>
+                                    No dividends or interest recorded yet.
+                                  </p>
+                                ) : (
+                                  <table className="ledger-table tx-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Type</th>
+                                        <th>Date</th>
+                                        <th>Description / Note</th>
+                                        <th className="num">Amount received</th>
+                                        <th style={{ width: 40 }} />
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {r.income.map((inc) => (
+                                        <tr key={inc.id}>
+                                          <td>
+                                            <span className={`badge-tx badge-tx--${inc.type}`}>
+                                              {inc.type}
+                                            </span>
+                                          </td>
+                                          <td>{formatDate(inc.date)}</td>
+                                          <td style={{ color: inc.notes ? "var(--paper-ink)" : "var(--paper-ink-soft)" }}>
+                                            {inc.notes || "—"}
+                                          </td>
+                                          <td className="num text-positive" style={{ fontWeight: 600 }}>
+                                            +{formatCurrency(inc.amount, currency)}
+                                          </td>
+                                          <td className="num">
+                                            <button
+                                              type="button"
+                                              className="icon-btn icon-btn--sm"
+                                              title="Delete income entry"
+                                              onClick={() => setDeleteIncomeTarget({ holdingId: r.id, incomeId: inc.id })}
+                                            >
+                                              {DEL_SVG}
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+
+                              {/* Price Alerts Section */}
+                              <div style={{ marginTop: "var(--sp-4)", borderTop: "1px dashed var(--paper-line)", paddingTop: "var(--sp-3)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--sp-2)" }}>
+                                  <div>
+                                    <h5 style={{ margin: 0, fontSize: "var(--fs-sm)", fontWeight: 700, color: "var(--paper-ink)" }}>
+                                      Price Alerts
+                                    </h5>
+                                    <p style={{ margin: "2px 0 0", fontSize: "var(--fs-2xs)", color: "var(--paper-ink-soft)" }}>
+                                      {allAlerts.filter((a) => a.investment_id === r.id).length} alert{allAlerts.filter((a) => a.investment_id === r.id).length === 1 ? "" : "s"} configured for {r.name}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm btn--ghost-paper"
+                                    onClick={() => openSetAlertModal(r)}
+                                  >
+                                    + Set price alert
+                                  </button>
+                                </div>
+
+                                {allAlerts.filter((a) => a.investment_id === r.id).length === 0 ? (
+                                  <p style={{ color: "var(--paper-ink-soft)", fontSize: "var(--fs-xs)", margin: "var(--sp-2) 0" }}>
+                                    No price alerts set for this position.
+                                  </p>
+                                ) : (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-2)", marginTop: 4 }}>
+                                    {allAlerts.filter((a) => a.investment_id === r.id).map((ha) => (
+                                      <button
+                                        type="button"
+                                        key={ha.id}
+                                        className="btn btn--sm btn--ghost-paper"
+                                        style={{
+                                          fontSize: "var(--fs-xs)",
+                                          padding: "4px 8px",
+                                          borderColor: ha.is_triggered && !ha.dismissed ? "var(--gold-500)" : "var(--paper-line)",
+                                          background: ha.is_triggered && !ha.dismissed ? "rgba(201, 162, 75, 0.15)" : "transparent",
+                                        }}
+                                        onClick={() => openSetAlertModal(r)}
+                                        title="Click to manage alert"
+                                      >
+                                        <span>{ha.condition === "above" ? "📈 ≥" : "📉 ≤"} {formatCurrency(ha.target_price, currency)}</span>
+                                        {ha.is_triggered && !ha.dismissed && (
+                                          <span style={{ color: "#8c6d1f", fontWeight: 700, marginLeft: 4 }}>Triggered 🚨</span>
+                                        )}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -647,7 +928,7 @@ export default function Holdings() {
                   <div className={`field${fieldErrors["field-purchase-price"] ? " has-error" : ""}`} id="field-purchase-price">
                     <label className="field__label" htmlFor="f-purchase-price">Purchase price / unit</label>
                     <div className="input-affix">
-                      <span className="input-affix__prefix">₹</span>
+                      <span className="input-affix__prefix">{currencySymbol}</span>
                       <input
                         className="input input--mono"
                         type="number"
@@ -673,7 +954,7 @@ export default function Holdings() {
                 <div className="field">
                   <label className="field__label" htmlFor="f-current-price">Current price / unit <span style={{ fontWeight: 400 }}>(update anytime)</span></label>
                   <div className="input-affix">
-                    <span className="input-affix__prefix">₹</span>
+                    <span className="input-affix__prefix">{currencySymbol}</span>
                     <input className="input input--mono" type="number" step="any" min="0" id="f-current-price" placeholder="Defaults to purchase price"
                       value={form.current_price} onChange={(e) => setFormField("current_price", e.target.value)} />
                   </div>
@@ -683,14 +964,14 @@ export default function Holdings() {
                 <div className="field-row">
                   <div className="field">
                     <label className="field__label" htmlFor="f-fees">Fees paid <span style={{ fontWeight: 400 }}>(brokerage, expense ratio, etc.)</span></label>
-                    <div className="input-affix"><span className="input-affix__prefix">₹</span>
+                    <div className="input-affix"><span className="input-affix__prefix">{currencySymbol}</span>
                       <input className="input input--mono" type="number" step="any" min="0" id="f-fees" placeholder="0.00"
                         value={form.fees_paid} onChange={(e) => setFormField("fees_paid", e.target.value)} />
                     </div>
                   </div>
                   <div className="field">
                     <label className="field__label" htmlFor="f-taxes">Taxes paid <span style={{ fontWeight: 400 }}>(STT, stamp duty, etc.)</span></label>
-                    <div className="input-affix"><span className="input-affix__prefix">₹</span>
+                    <div className="input-affix"><span className="input-affix__prefix">{currencySymbol}</span>
                       <input className="input input--mono" type="number" step="any" min="0" id="f-taxes" placeholder="0.00"
                         value={form.taxes_paid} onChange={(e) => setFormField("taxes_paid", e.target.value)} />
                     </div>
@@ -764,14 +1045,14 @@ export default function Holdings() {
                 <div className="field-row">
                   <div className="field">
                     <label className="field__label" htmlFor="sell-price">Sale price / unit</label>
-                    <div className="input-affix"><span className="input-affix__prefix">₹</span>
+                    <div className="input-affix"><span className="input-affix__prefix">{currencySymbol}</span>
                       <input className="input input--mono" type="number" step="any" min="0" id="sell-price"
                         value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} required />
                     </div>
                   </div>
                   <div className="field">
                     <label className="field__label" htmlFor="sell-fees">Fees / Brokerage</label>
-                    <div className="input-affix"><span className="input-affix__prefix">₹</span>
+                    <div className="input-affix"><span className="input-affix__prefix">{currencySymbol}</span>
                       <input className="input input--mono" type="number" step="any" min="0" id="sell-fees"
                         placeholder="0.00" value={sellFees} onChange={(e) => setSellFees(e.target.value)} />
                     </div>
@@ -874,7 +1155,7 @@ export default function Holdings() {
                   <div className="field">
                     <label className="field__label" htmlFor="tx-price">Price / unit</label>
                     <div className="input-affix">
-                      <span className="input-affix__prefix">₹</span>
+                      <span className="input-affix__prefix">{currencySymbol}</span>
                       <input
                         className="input input--mono"
                         type="number"
@@ -905,7 +1186,7 @@ export default function Holdings() {
                   <div className="field">
                     <label className="field__label" htmlFor="tx-fees">Fees / Brokerage</label>
                     <div className="input-affix">
-                      <span className="input-affix__prefix">₹</span>
+                      <span className="input-affix__prefix">{currencySymbol}</span>
                       <input
                         className="input input--mono"
                         type="number"
@@ -970,6 +1251,147 @@ export default function Holdings() {
           </div>
         </div>
       )}
+
+      {/* ── Delete Transaction Modal ────────────────────────────────────────── */}
+      {deleteTxTarget && (
+        <div className="modal-overlay is-open" onClick={(e) => handleOverlayClick(e, () => setDeleteTxTarget(null))}>
+          <div className="modal" style={{ maxWidth: 400 }}>
+            <div className="modal__body" style={{ paddingTop: "var(--sp-5)" }}>
+              <h3 className="modal__title" style={{ marginBottom: 6 }}>Delete this transaction?</h3>
+              <p style={{ color: "var(--paper-ink-soft)", fontSize: "var(--fs-sm)", margin: 0 }}>
+                The holding's units, cost basis, and returns will be recalculated. This can't be undone.
+              </p>
+            </div>
+            <div className="modal__foot">
+              <button type="button" className="btn btn--ghost-paper" onClick={() => setDeleteTxTarget(null)}>Cancel</button>
+              <button type="button" className="btn btn--danger" onClick={confirmDeleteTx}>Delete transaction</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Record Income Modal ─────────────────────────────────────────── */}
+      {incomeModal && incomeHolding && (
+        <div className="modal-overlay is-open" onClick={(e) => handleOverlayClick(e, () => setIncomeModal(false))}>
+          <div className="modal">
+            <div className="modal__head">
+              <div>
+                <h3 className="modal__title">Record income</h3>
+                <p className="modal__sub">Log a dividend or interest payment for {incomeHolding.name}.</p>
+              </div>
+              <button type="button" className="icon-btn" onClick={() => setIncomeModal(false)} aria-label="Close">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </button>
+            </div>
+            <form onSubmit={handleSaveIncome}>
+              <div className="modal__body">
+                <div className="field-row">
+                  <div className="field">
+                    <label className="field__label" htmlFor="inc-type">Income type</label>
+                    <select
+                      className="input"
+                      id="inc-type"
+                      value={incomeForm.type}
+                      onChange={(e) => setIncomeForm((f) => ({ ...f, type: e.target.value }))}
+                    >
+                      <option value="dividend">Dividend (stocks / mutual funds)</option>
+                      <option value="interest">Interest (fixed deposit / bonds)</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label className="field__label" htmlFor="inc-amount">Amount received</label>
+                    <div className="input-affix">
+                      <span className="input-affix__prefix">{currencySymbol}</span>
+                      <input
+                        className="input input--mono"
+                        type="number"
+                        step="any"
+                        min="0.01"
+                        id="inc-amount"
+                        placeholder="0.00"
+                        value={incomeForm.amount}
+                        onChange={(e) => setIncomeForm((f) => ({ ...f, amount: e.target.value }))}
+                        required
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="field-row">
+                  <div className="field">
+                    <label className="field__label" htmlFor="inc-date">Payment date</label>
+                    <input
+                      className="input"
+                      type="date"
+                      id="inc-date"
+                      value={incomeForm.date}
+                      onChange={(e) => setIncomeForm((f) => ({ ...f, date: e.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label className="field__label" htmlFor="inc-notes">Note / Period (optional)</label>
+                    <input
+                      className="input"
+                      type="text"
+                      id="inc-notes"
+                      placeholder="e.g. Q3 Dividend, FY24 Interest"
+                      value={incomeForm.notes}
+                      onChange={(e) => setIncomeForm((f) => ({ ...f, notes: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="preview-box">
+                  <div className="preview-box__row">
+                    <span>Holding:</span>
+                    <span>{incomeHolding.name} ({incomeHolding.identifier || incomeHolding.unit})</span>
+                  </div>
+                  <div className="preview-box__row">
+                    <span>Cashflow impact:</span>
+                    <span style={{ color: "var(--jade-600)", fontWeight: 700 }}>
+                      +{formatCurrency(Number(incomeForm.amount) || 0, currency)} (Cash inflow)
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="modal__foot">
+                <button type="button" className="btn btn--ghost-paper" onClick={() => setIncomeModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn--primary" disabled={savingIncome}>
+                  {savingIncome ? "Recording…" : "Save income"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Income Entry Modal ────────────────────────────────────── */}
+      {deleteIncomeTarget && (
+        <div className="modal-overlay is-open" onClick={(e) => handleOverlayClick(e, () => setDeleteIncomeTarget(null))}>
+          <div className="modal" style={{ maxWidth: 400 }}>
+            <div className="modal__body" style={{ paddingTop: "var(--sp-5)" }}>
+              <h3 className="modal__title" style={{ marginBottom: 6 }}>Delete this income payment?</h3>
+              <p style={{ color: "var(--paper-ink-soft)", fontSize: "var(--fs-sm)", margin: 0 }}>
+                This income payment will be removed and the holding's return metrics will be recalculated.
+              </p>
+            </div>
+            <div className="modal__foot">
+              <button type="button" className="btn btn--ghost-paper" onClick={() => setDeleteIncomeTarget(null)}>Cancel</button>
+              <button type="button" className="btn btn--danger" onClick={confirmDeleteIncome}>Delete payment</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Alerts Modal ────────────────────────────────────────────────── */}
+      <AlertsModal
+        isOpen={alertsModalOpen}
+        onClose={() => setAlertsModalOpen(false)}
+        presetHoldingId={presetAlertHolding}
+        currency={currency}
+        onAlertsChanged={refresh}
+      />
     </DashboardLayout>
   );
 }

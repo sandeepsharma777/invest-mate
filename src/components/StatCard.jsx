@@ -7,13 +7,12 @@ export default function StatCard({ label, value, sub, delta, deltaPositive }) {
     <div className="ledger-card stat-card">
       <span className="stat-card__label">{label}</span>
       <span className="stat-card__value num">{value}</span>
-      {delta != null ? (
+      {delta != null && (
         <span className={`stat-card__delta ${deltaPositive ? "is-positive" : "is-negative"}`}>
           {deltaPositive ? "▲" : "▼"} {delta}
         </span>
-      ) : (
-        <span className="text-muted" style={{ fontSize: "var(--fs-2xs)" }}>{sub}</span>
       )}
+      {sub && <span className="text-muted" style={{ fontSize: "var(--fs-2xs)" }}>{sub}</span>}
     </div>
   );
 }

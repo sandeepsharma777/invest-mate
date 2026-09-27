@@ -1,0 +1,191 @@
+/* =========================================================
+   InvestMate — Alerts CSS
+   ========================================================= */
+
+.alerts-banner-container {
+  margin-bottom: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.alert-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 12px var(--sp-4);
+  background: rgba(201, 162, 75, 0.12);
+  border: 1px solid var(--gold-500);
+  border-left: 4px solid var(--gold-500);
+  border-radius: var(--radius-md);
+  color: var(--paper-ink);
+  font-size: var(--fs-sm);
+  animation: fadeIn 0.25s var(--ease-out);
+}
+
+.alert-strip--below {
+  background: rgba(184, 51, 42, 0.08);
+  border-color: rgba(184, 51, 42, 0.4);
+  border-left-color: var(--oxblood-600);
+}
+
+.alert-strip__content {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-strip__icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(201, 162, 75, 0.25);
+  color: var(--gold-600);
+}
+.alert-strip--below .alert-strip__icon {
+  background: rgba(184, 51, 42, 0.15);
+  color: var(--oxblood-600);
+}
+
+.alert-strip__msg {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.alert-strip__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+/* Alert badge in top bar */
+.topbar-alert-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--paper-line);
+  background: var(--paper-000);
+  color: var(--paper-ink);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.topbar-alert-btn:hover {
+  background: var(--paper-100);
+  border-color: var(--gold-500);
+}
+.topbar-alert-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.topbar-alert-btn__badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--oxblood-600);
+  color: #fff;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px var(--paper-000);
+}
+
+/* Alerts management list in modal */
+.alerts-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.alert-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 12px 14px;
+  background: #fbf9f5;
+  border: 1px solid var(--paper-line);
+  border-radius: var(--radius-md);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.alert-card-row.is-triggered {
+  border-color: var(--gold-500);
+  background: rgba(201, 162, 75, 0.08);
+}
+
+.alert-card-row__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-card-row__title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  color: var(--paper-ink);
+  margin-bottom: 2px;
+}
+
+.alert-card-row__meta {
+  font-size: var(--fs-xs);
+  color: var(--paper-ink-soft);
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.status-pill--triggered {
+  background: rgba(201, 162, 75, 0.25);
+  color: #8c6d1f;
+}
+.status-pill--active {
+  background: rgba(46, 125, 90, 0.12);
+  color: var(--jade-600);
+}
+.status-pill--dismissed {
+  background: var(--paper-100);
+  color: var(--paper-ink-soft);
+}
+
+.alert-pill-condition {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

@@ -4,24 +4,35 @@
  * context / state instead of direct DOM manipulation.
  */
 
-export function formatCurrency(amount, currency = "INR") {
+export function getCurrencySymbol(currency = "INR") {
   const symbols = { INR: "₹", USD: "$", EUR: "€", GBP: "£" };
-  const symbol = symbols[currency] || currency + " ";
+  return symbols[currency] || (currency ? currency + " " : "₹");
+}
+
+export function formatCurrency(amount, currency = "INR") {
+  const symbol = getCurrencySymbol(currency);
   const n = Number(amount) || 0;
-  const formatted = Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const locale = currency === "INR" ? "en-IN" : "en-US";
+  const formatted = Math.abs(n).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${n < 0 ? "-" : ""}${symbol}${formatted}`;
 }
 
 export function formatCompact(amount, currency = "INR") {
-  const symbols = { INR: "₹", USD: "$", EUR: "€", GBP: "£" };
-  const symbol = symbols[currency] || currency + " ";
+  const symbol = getCurrencySymbol(currency);
   const n = Number(amount) || 0;
   const abs = Math.abs(n);
   let out;
-  if (abs >= 1e7) out = (abs / 1e7).toFixed(2) + "Cr";
-  else if (abs >= 1e5) out = (abs / 1e5).toFixed(2) + "L";
-  else if (abs >= 1e3) out = (abs / 1e3).toFixed(1) + "K";
-  else out = abs.toFixed(2);
+  if (currency === "INR") {
+    if (abs >= 1e7) out = (abs / 1e7).toFixed(2) + "Cr";
+    else if (abs >= 1e5) out = (abs / 1e5).toFixed(2) + "L";
+    else if (abs >= 1e3) out = (abs / 1e3).toFixed(1) + "K";
+    else out = abs.toFixed(2);
+  } else {
+    if (abs >= 1e9) out = (abs / 1e9).toFixed(2) + "B";
+    else if (abs >= 1e6) out = (abs / 1e6).toFixed(2) + "M";
+    else if (abs >= 1e3) out = (abs / 1e3).toFixed(1) + "K";
+    else out = abs.toFixed(2);
+  }
   return `${n < 0 ? "-" : ""}${symbol}${out}`;
 }
 
@@ -32,6 +43,11 @@ export function formatPercent(value) {
 
 export function formatDate(dateStr) {
   if (!dateStr) return "—";
+  if (typeof dateStr === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  }
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return dateStr;
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
@@ -54,6 +70,14 @@ export function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function parseDateMs(d) {
+  if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    const [y, m, day] = d.split("-").map(Number);
+    return Date.UTC(y, m - 1, day);
+  }
+  return new Date(d).getTime();
+}
+
 /**
  * Calculates XIRR (Extended Internal Rate of Return) using Newton-Raphson
  * with a fallback bisection search.
@@ -67,7 +91,7 @@ export function calculateXIRR(cashflows, guess = 0.1) {
   const valid = cashflows
     .map((cf) => ({
       amount: Number(cf.amount) || 0,
-      date: new Date(cf.date).getTime(),
+      date: parseDateMs(cf.date),
     }))
     .filter((cf) => !Number.isNaN(cf.date) && Math.abs(cf.amount) > 1e-6);
 
@@ -175,8 +199,8 @@ export function calculateCAGR(initialValue, finalValue, startDate, endDate) {
   const vt = Number(finalValue) || 0;
   if (v0 <= 0 || vt < 0) return null;
 
-  const t0 = new Date(startDate).getTime();
-  const t1 = new Date(endDate).getTime();
+  const t0 = parseDateMs(startDate);
+  const t1 = parseDateMs(endDate);
   if (Number.isNaN(t0) || Number.isNaN(t1) || t1 <= t0) return null;
 
   const years = (t1 - t0) / (1000 * 60 * 60 * 24 * 365.25);

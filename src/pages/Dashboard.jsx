@@ -6,10 +6,18 @@ import { Seal, ColorDot } from "../components/Seal";
 import { AllocationDonut } from "../components/Charts";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { analytics, investments, ASSET_TYPES } from "../lib/db";
-import { formatCurrency, formatCompact, formatPercent } from "../lib/utils";
+import { analytics, investments, goals, alerts, ASSET_TYPES } from "../lib/db";
+import { formatCurrency, formatCompact, formatPercent, formatDate } from "../lib/utils";
 import { PALETTE } from "../lib/chartConfig";
+import AlertsBanner from "../components/AlertsBanner";
+import AlertsModal from "../components/AlertsModal";
 import "../styles/dashboard.css";
+
+const BELL_SVG = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
+  </svg>
+);
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -19,32 +27,70 @@ export default function Dashboard() {
   const [allocation, setAllocation] = useState([]);
   const [movers, setMovers] = useState({ gainers: [], losers: [] });
   const [recent, setRecent] = useState([]);
+  const [goalSummary, setGoalSummary] = useState(null);
+  const [triggeredAlerts, setTriggeredAlerts] = useState([]);
+  const [alertsModalOpen, setAlertsModalOpen] = useState(false);
+  const [selectedAlertHolding, setSelectedAlertHolding] = useState(null);
   const [loaded, setLoaded] = useState(false);
 
   const currency = user?.currency || "INR";
   const firstName = user?.name?.split(" ")[0] || "";
   const trackedTypes = user?.tracked_asset_types?.length ? user.tracked_asset_types : Object.keys(ASSET_TYPES);
 
-  useEffect(() => {
+  const fetchDashboardData = () => {
     if (!user) return;
     Promise.all([
       analytics.getSummary(),
       analytics.getAllocation(),
       analytics.getTopMovers(3),
       investments.list({ status: "active" }),
+      goals.getSummary(),
+      alerts.getTriggered(),
     ])
-      .then(([s, alloc, mov, rows]) => {
+      .then(([s, alloc, mov, rows, gSummary, trAlerts]) => {
         setSummary(s);
         setAllocation(alloc);
         setMovers(mov);
         setRecent(rows.slice(0, 6));
+        setGoalSummary(gSummary);
+        setTriggeredAlerts(trAlerts || []);
         setLoaded(true);
       })
       .catch((err) => toast(err.message || "Couldn't load dashboard.", "error"));
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
   }, [user, toast]);
+
+  async function handleDismissAlert(alertId) {
+    try {
+      await alerts.dismiss(alertId);
+      setTriggeredAlerts((prev) => prev.filter((a) => a.id !== alertId));
+      toast("Alert notification dismissed", "info");
+    } catch (err) {
+      toast(err.message || "Failed to dismiss alert", "error");
+    }
+  }
+
+  async function handleDismissAllAlerts() {
+    try {
+      await alerts.dismissAll();
+      setTriggeredAlerts([]);
+      toast("All alerts dismissed", "info");
+    } catch (err) {
+      toast(err.message || "Failed to dismiss alerts", "error");
+    }
+  }
+
+  function handleOpenManageAlerts(holdingId = null) {
+    setSelectedAlertHolding(holdingId);
+    setAlertsModalOpen(true);
+  }
 
   const isEmpty = loaded && summary?.holdings_count === 0;
   const isGain = (summary?.absolute_return ?? 0) >= 0;
+  const primaryGoal = goalSummary?.primary_goal;
 
   return (
     <DashboardLayout>
@@ -54,15 +100,37 @@ export default function Dashboard() {
           <h1 id="greeting">{loaded ? `Good to see you, ${firstName}` : "Good to see you"}</h1>
           <p className="topbar__sub">Everything you hold, valued as of your last manual update.</p>
         </div>
-        <Link className="btn btn--primary" to="/holdings?add=1">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
-          Add investment
-        </Link>
+        <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
+          <button
+            type="button"
+            className="topbar-alert-btn"
+            title="Manage Price Alerts"
+            onClick={() => handleOpenManageAlerts()}
+          >
+            {BELL_SVG}
+            {triggeredAlerts.length > 0 && (
+              <span className="topbar-alert-btn__badge">{triggeredAlerts.length}</span>
+            )}
+          </button>
+          <Link className="btn btn--primary" to="/holdings?add=1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+            Add investment
+          </Link>
+        </div>
       </div>
+
+      {/* Triggered Price Alerts Banner */}
+      <AlertsBanner
+        triggeredAlerts={triggeredAlerts}
+        currency={currency}
+        onDismiss={handleDismissAlert}
+        onDismissAll={handleDismissAllAlerts}
+        onOpenManage={handleOpenManageAlerts}
+      />
 
       {/* Stat cards */}
       {!isEmpty && (
-        <div className="card-grid" id="stat-cards">
+        <div className={`card-grid${primaryGoal ? " card-grid--5" : ""}`} id="stat-cards">
           {!loaded ? (
             <>
               <div className="ledger-card stat-card"><div className="skel" style={{ height: 70 }} /></div>
@@ -77,12 +145,24 @@ export default function Dashboard() {
               <StatCard label="Total invested" value={formatCurrency(summary.total_invested, currency)}
                 sub="Cost basis incl. fees & taxes" />
               <StatCard label="Absolute return" value={formatCurrency(summary.absolute_return, currency)}
-                delta={formatPercent(summary.percent_return)} deltaPositive={isGain} sub="Unannualized return" />
+                delta={formatPercent(summary.percent_return)} deltaPositive={isGain}
+                sub={summary.total_income > 0 ? `Incl. ${formatCurrency(summary.total_income, currency)} dividends & interest` : "Unannualized return"} />
               <StatCard label="Portfolio XIRR"
                 value={summary.portfolio_xirr != null ? `${formatPercent(summary.portfolio_xirr)} p.a.` : "—"}
                 delta={summary.portfolio_xirr != null ? "Annualized" : undefined}
                 deltaPositive={(summary.portfolio_xirr ?? 0) >= 0}
                 sub="Cashflow-weighted return" />
+              {primaryGoal && (
+                <Link to="/goals" style={{ textDecoration: "none", color: "inherit", display: "contents" }}>
+                  <StatCard
+                    label={`Goal: ${primaryGoal.name}`}
+                    value={`${primaryGoal.percent_complete.toFixed(0)}%`}
+                    delta={primaryGoal.is_reached ? "Reached" : (primaryGoal.target_date ? formatDate(primaryGoal.target_date) : undefined)}
+                    deltaPositive={primaryGoal.is_reached}
+                    sub={primaryGoal.is_reached ? "Target achieved 🎉" : `${formatCurrency(primaryGoal.remaining_amount, currency)} remaining`}
+                  />
+                </Link>
+              )}
             </>
           )}
         </div>
@@ -118,7 +198,7 @@ export default function Dashboard() {
                 </div>
                 <div className="allocation-panel">
                   <div className="allocation-panel__chart">
-                    <AllocationDonut allocationRows={allocation} />
+                    <AllocationDonut allocationRows={allocation} currency={currency} />
                     <div className="allocation-panel__center">
                       <b className="num" id="allocation-total">{formatCompact(summary.total_current_value, currency)}</b>
                       <span>Total value</span>
@@ -256,6 +336,15 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Price Alerts Management Modal */}
+      <AlertsModal
+        isOpen={alertsModalOpen}
+        onClose={() => setAlertsModalOpen(false)}
+        presetHoldingId={selectedAlertHolding}
+        currency={currency}
+        onAlertsChanged={fetchDashboardData}
+      />
     </DashboardLayout>
   );
 }

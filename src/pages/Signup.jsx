@@ -191,14 +191,13 @@ export default function Signup() {
                       key={type.key}
                       className={`asset-option${isSelected ? " is-selected" : ""}`}
                       data-type={type.key}
-                      onClick={() => toggleType(type.key)}
                     >
                       <input
                         type="checkbox"
                         name="asset_type"
                         value={type.key}
                         checked={isSelected}
-                        onChange={() => {}} // controlled via onClick on label
+                        onChange={() => toggleType(type.key)}
                       />
                       <span className="asset-option__icon" style={{ background: "rgba(201,162,75,0.14)", color: "var(--gold-500)" }}>
                         {ASSET_ICONS[type.key] || ASSET_ICONS.other}

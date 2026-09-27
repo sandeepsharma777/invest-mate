@@ -46,6 +46,17 @@ export default function DashboardLayout({ children }) {
         </svg>
       ),
     },
+    {
+      to: "/goals",
+      label: "Goals",
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="9"/>
+          <circle cx="12" cy="12" r="5"/>
+          <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+        </svg>
+      ),
+    },
   ];
 
   return (
@@ -53,12 +64,19 @@ export default function DashboardLayout({ children }) {
       <button
         className="nav-toggle"
         id="nav-toggle"
-        aria-label="Toggle menu"
+        aria-label={sidebarOpen ? "Close menu" : "Open menu"}
+        aria-expanded={sidebarOpen}
         onClick={() => setSidebarOpen((o) => !o)}
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M3 6h18M3 12h18M3 18h18"/>
-        </svg>
+        {sidebarOpen ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 6h18M3 12h18M3 18h18" />
+          </svg>
+        )}
       </button>
 
       {sidebarOpen && (
@@ -97,17 +115,17 @@ export default function DashboardLayout({ children }) {
           <div className="sidebar__footer">
             <div className="user-chip">
               <div className="user-chip__avatar">{user ? initials(user.name) : "—"}</div>
-              <div>
-                <div className="user-chip__name">{user?.name || "Loading…"}</div>
-                <div className="user-chip__email">{user?.email || ""}</div>
+              <div className="user-chip__info">
+                <div className="user-chip__name" title={user?.name || ""}>{user?.name || "Loading…"}</div>
+                <div className="user-chip__email" title={user?.email || ""}>{user?.email || ""}</div>
               </div>
             </div>
-            <a className="logout-link" href="#" onClick={handleLogout}>
+            <button type="button" className="logout-link" onClick={handleLogout}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
                 <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
               </svg>
               Log out
-            </a>
+            </button>
           </div>
         </aside>
 

@@ -4,6 +4,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import StatCard from "../components/StatCard";
 import { Seal } from "../components/Seal";
 import { ReturnsBarChart, InvestedVsCurrentChart } from "../components/Charts";
+import RebalancingSection from "../components/RebalancingSection";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { analytics, investments, ASSET_TYPES } from "../lib/db";
@@ -102,18 +103,23 @@ export default function Analytics() {
       </div>
 
       {/* Stat cards showing Absolute Return and XIRR side by side */}
-      <div className="card-grid" id="analytics-stat-cards">
+      <div className="card-grid card-grid--5" id="analytics-stat-cards">
         <StatCard label="Total portfolio value" value={formatCurrency(summary.total_current_value, currency)}
           sub={`${summary.holdings_count} active position${summary.holdings_count === 1 ? "" : "s"}`} />
         <StatCard label="Total invested" value={formatCurrency(summary.total_invested, currency)}
           sub="Cost basis incl. fees & taxes" />
         <StatCard label="Absolute return" value={formatCurrency(summary.absolute_return, currency)}
-          delta={formatPercent(summary.percent_return)} deltaPositive={isGain} sub="Unannualized return" />
+          delta={formatPercent(summary.percent_return)} deltaPositive={isGain} sub="Capital gain + income" />
         <StatCard label="Portfolio XIRR"
           value={summary.portfolio_xirr != null ? `${formatPercent(summary.portfolio_xirr)} p.a.` : "—"}
           delta={summary.portfolio_xirr != null ? "Annualized" : undefined}
           deltaPositive={(summary.portfolio_xirr ?? 0) >= 0}
           sub="Cashflow-weighted return" />
+        <StatCard label="Income received"
+          value={formatCurrency(summary.total_income || 0, currency)}
+          delta={(summary.total_income || 0) > 0 ? "Received" : undefined}
+          deltaPositive={true}
+          sub={`Div: ${formatCurrency(summary.total_dividends || 0, currency)} · Int: ${formatCurrency(summary.total_interest || 0, currency)}`} />
       </div>
 
       {/* Insight banner */}
@@ -127,6 +133,9 @@ export default function Analytics() {
             Your portfolio is <strong>{isGain ? "up" : "down"} {formatPercent(summary.percent_return)}</strong> overall ({formatCurrency(summary.absolute_return, currency)})
             {summary.portfolio_xirr != null && (
               <> with an annualized <strong>XIRR of {formatPercent(summary.portfolio_xirr)} p.a.</strong></>
+            )}
+            {summary.total_income > 0 && (
+              <> (including <strong>{formatCurrency(summary.total_income, currency)}</strong> dividends &amp; interest)</>
             )}
             {best && (
               <> — <strong>{best.label}</strong> is your strongest asset class at {formatPercent(best.percent_return)}.</>
@@ -153,7 +162,7 @@ export default function Analytics() {
               <p className="panel__sub">Cost basis compared with today's value</p>
             </div>
           </div>
-          <div className="chart-box"><InvestedVsCurrentChart returnsRows={returnsByAsset} /></div>
+          <div className="chart-box"><InvestedVsCurrentChart returnsRows={returnsByAsset} currency={currency} /></div>
         </div>
       </div>
 
@@ -167,6 +176,9 @@ export default function Analytics() {
           <div id="losers-list">{renderMovers(movers.losers, false)}</div>
         </div>
       </div>
+
+      {/* Portfolio Health & Rebalancing Section */}
+      <RebalancingSection currency={currency} />
 
       <div className="panel">
         <div className="panel__head">
