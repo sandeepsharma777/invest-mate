@@ -37,8 +37,15 @@ export function formatCompact(amount, currency = "INR") {
 }
 
 export function formatPercent(value) {
-  const n = Number(value) || 0;
-  return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  if (n > 9999) return ">9,999%";
+  if (n < -9999) return "<-9,999%";
+  const absFormatted = Math.abs(n).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${n > 0 ? "+" : n < 0 ? "-" : ""}${absFormatted}%`;
 }
 
 export function formatDate(dateStr) {
@@ -204,9 +211,11 @@ export function calculateCAGR(initialValue, finalValue, startDate, endDate) {
   if (Number.isNaN(t0) || Number.isNaN(t1) || t1 <= t0) return null;
 
   const years = (t1 - t0) / (1000 * 60 * 60 * 24 * 365.25);
-  if (years < 1 / 365) return null;
+  // Compound Annual Growth Rate is only defined/meaningful for holding periods of 1 year or more (365+ days)
+  if (years < 1) return null;
 
   if (vt === 0) return -100;
   const cagr = (Math.pow(vt / v0, 1 / years) - 1) * 100;
+  if (!Number.isFinite(cagr)) return null;
   return Math.round(cagr * 100) / 100;
 }

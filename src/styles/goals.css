@@ -59,7 +59,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--paper-ink-soft);
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -69,7 +69,7 @@
 .goal-card__figures {
   background: #fbf9f5;
   border: 1px dashed var(--paper-line);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   padding: var(--sp-3) var(--sp-4);
   display: flex;
   justify-content: space-between;
@@ -85,7 +85,7 @@
 }
 
 .goal-figure__label {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--paper-ink-soft);
@@ -123,7 +123,7 @@
 
 .goal-progress__rem {
   color: var(--paper-ink-soft);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
 }
 
 .goal-progress-track {
@@ -131,7 +131,7 @@
   height: 10px;
   background: var(--paper-100);
   border: 1px solid var(--paper-line);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   overflow: hidden;
   position: relative;
 }
@@ -139,7 +139,7 @@
 .goal-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--gold-500), #e5b95b);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .goal-progress-fill.is-achieved {
@@ -150,7 +150,7 @@
 .goal-projection {
   background: var(--paper-000);
   border: 1px solid var(--paper-line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   padding: 10px 12px;
   font-size: var(--fs-xs);
   display: flex;

@@ -7,11 +7,53 @@ import { AllocationDonut } from "../components/Charts";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { analytics, investments, goals, alerts, ASSET_TYPES } from "../lib/db";
-import { formatCurrency, formatCompact, formatPercent, formatDate } from "../lib/utils";
+import { formatCurrency, formatCompact, formatDate, todayISO } from "../lib/utils";
 import { PALETTE } from "../lib/chartConfig";
 import AlertsBanner from "../components/AlertsBanner";
 import AlertsModal from "../components/AlertsModal";
+import ReturnBadge from "../components/ReturnBadge";
 import "../styles/dashboard.css";
+
+function getHoldingDays(holding) {
+  let pDate = holding?.purchase_date || holding?.created_at?.slice(0, 10);
+  if (Array.isArray(holding?.transactions)) {
+    for (const tx of holding.transactions) {
+      if (tx.date && (!pDate || tx.date < pDate)) {
+        pDate = tx.date;
+      }
+    }
+  }
+  if (!pDate) return 0;
+  const t0 = new Date(pDate).getTime();
+  const t1 = new Date(todayISO()).getTime();
+  if (Number.isNaN(t0) || Number.isNaN(t1)) return 0;
+  return Math.max(0, Math.floor((t1 - t0) / (1000 * 60 * 60 * 24)));
+}
+
+function formatHoldingCagr(r) {
+  const days = getHoldingDays(r);
+  if (days < 365) {
+    return "CAGR n/a (< 1 yr)";
+  }
+  const val = r.cagr ?? r.xirr;
+  if (val == null || !Number.isFinite(Number(val))) {
+    return "CAGR n/a";
+  }
+  const n = Number(val);
+  let formatted;
+  if (n > 9999) {
+    formatted = ">9,999%";
+  } else if (n < -9999) {
+    formatted = "<-9,999%";
+  } else {
+    const absFormatted = Math.abs(n).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    formatted = `${n > 0 ? "+" : n < 0 ? "-" : ""}${absFormatted}%`;
+  }
+  return `${formatted} CAGR`;
+}
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -83,8 +125,57 @@ export default function Dashboard() {
   }
 
   const isEmpty = loaded && summary?.holdings_count === 0;
-  const isGain = (summary?.absolute_return ?? 0) >= 0;
   const primaryGoal = goalSummary?.primary_goal;
+
+  // Calculate earliest investment/purchase date across all holdings
+  let earliestDate = summary?.earliest_date || null;
+  if (!earliestDate && recent?.length) {
+    for (const h of recent) {
+      const p = h.purchase_date || h.created_at?.slice(0, 10);
+      if (p && (!earliestDate || p < earliestDate)) earliestDate = p;
+      if (Array.isArray(h.transactions)) {
+        for (const tx of h.transactions) {
+          if (tx.date && (!earliestDate || tx.date < earliestDate)) earliestDate = tx.date;
+        }
+      }
+    }
+  }
+
+  let daysSinceEarliest = 0;
+  if (earliestDate) {
+    const t0 = new Date(earliestDate).getTime();
+    const t1 = new Date(todayISO()).getTime();
+    if (!Number.isNaN(t0) && !Number.isNaN(t1)) {
+      daysSinceEarliest = Math.max(0, Math.floor((t1 - t0) / (1000 * 60 * 60 * 24)));
+    }
+  } else if (summary?.days_since_earliest != null) {
+    daysSinceEarliest = summary.days_since_earliest;
+  }
+
+  const hasOneYearHistory = daysSinceEarliest >= 365;
+
+  let xirrValue = "—";
+  let xirrSub = "Needs 1+ year of history";
+  let xirrDelta = undefined;
+  let xirrDeltaPositive = false;
+
+  if (hasOneYearHistory && summary?.portfolio_xirr != null && Number.isFinite(summary.portfolio_xirr)) {
+    const r = summary.portfolio_xirr;
+    let formattedXirr;
+    if (r > 9999) formattedXirr = ">9,999%";
+    else if (r < -9999) formattedXirr = "<-9,999%";
+    else {
+      const absFormatted = Math.abs(r).toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      formattedXirr = `${r > 0 ? "+" : r < 0 ? "-" : ""}${absFormatted}%`;
+    }
+    xirrValue = `${formattedXirr} p.a.`;
+    xirrDelta = "Annualized";
+    xirrDeltaPositive = r >= 0;
+    xirrSub = "Cashflow-weighted return";
+  }
 
   return (
     <DashboardLayout>
@@ -127,14 +218,19 @@ export default function Dashboard() {
                 sub={`${summary.holdings_count} active position${summary.holdings_count === 1 ? "" : "s"}`} />
               <StatCard label="Total invested" value={formatCurrency(summary.total_invested, currency)}
                 sub="Cost basis incl. fees & taxes" />
-              <StatCard label="Absolute return" value={formatCurrency(summary.absolute_return, currency)}
-                delta={formatPercent(summary.percent_return)} deltaPositive={isGain}
-                sub={summary.total_income > 0 ? `Incl. ${formatCurrency(summary.total_income, currency)} dividends & interest` : "Unannualized return"} />
-              <StatCard label="Portfolio XIRR"
-                value={summary.portfolio_xirr != null ? `${formatPercent(summary.portfolio_xirr)} p.a.` : "—"}
-                delta={summary.portfolio_xirr != null ? "Annualized" : undefined}
-                deltaPositive={(summary.portfolio_xirr ?? 0) >= 0}
-                sub="Cashflow-weighted return" />
+              <StatCard
+                label="Absolute return"
+                value={formatCurrency(summary.absolute_return, currency)}
+                badge={<ReturnBadge value={summary.percent_return} />}
+                sub={summary.total_income > 0 ? `Incl. ${formatCurrency(summary.total_income, currency)} dividends & interest` : "Unannualized return"}
+              />
+              <StatCard
+                label="Portfolio XIRR"
+                value={xirrValue}
+                delta={xirrDelta}
+                deltaPositive={xirrDeltaPositive}
+                sub={xirrSub}
+              />
               {primaryGoal && (
                 <Link to="/goals" style={{ textDecoration: "none", color: "inherit", display: "contents" }}>
                   <StatCard
@@ -238,9 +334,24 @@ export default function Dashboard() {
                     const t = ASSET_TYPES[key];
                     if (!t) return null;
                     return (
-                      <Link key={key} className="quick-add__btn" to={`/holdings?add=1&type=${key}`}>
+                      <Link
+                        key={key}
+                        className="quick-add__btn"
+                        to={`/holdings?add=1&type=${key}`}
+                        aria-label={`Add ${t.label}`}
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          className="quick-add__icon"
+                          aria-hidden="true"
+                        >
+                          <path d="M12 5v14M5 12h14" />
+                        </svg>
                         <ColorDot assetType={key} />
-                        {t.label}
+                        <span>{t.label}</span>
                       </Link>
                     );
                   })}
@@ -261,10 +372,8 @@ export default function Dashboard() {
                           {r.name}
                         </span>
                         <span className="perf-list__figures">
-                          <span className={`num ${r.percent_return >= 0 ? "text-positive" : "text-negative"}`}>
-                            {formatPercent(r.percent_return)}
-                          </span>
-                          <small>{formatCompact(r.absolute_return, currency)}</small>
+                          <ReturnBadge value={r.percent_return} />
+                          <small style={{ fontSize: "var(--fs-xs)", display: "block", marginTop: 2 }}>{formatCompact(r.absolute_return, currency)}</small>
                         </span>
                       </div>
                     ))
@@ -305,11 +414,13 @@ export default function Dashboard() {
                       <td><Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} /></td>
                       <td className="num">{formatCurrency(r.invested_amount, currency)}</td>
                       <td className="num">{formatCurrency(r.current_value, currency)}</td>
-                      <td className={`num ${r.absolute_return >= 0 ? "text-positive" : "text-negative"}`}>
-                        <div>{formatPercent(r.percent_return)}</div>
-                        <div style={{ fontSize: "var(--fs-2xs)", color: "var(--paper-ink-soft)" }}>
-                          {r.xirr != null ? `${formatPercent(r.xirr)} XIRR` : (r.cagr != null ? `${formatPercent(r.cagr)} CAGR` : "")}
-                        </div>
+                      <td className="num">
+                        <ReturnBadge value={r.percent_return} />
+                        {formatHoldingCagr(r) && (
+                          <div style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)", marginTop: 4 }}>
+                            {formatHoldingCagr(r)}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -23,19 +23,19 @@
 .rank-row:last-child { border-bottom: none; }
 .rank-row__idx { font-family: var(--font-mono); color: var(--paper-ink-soft); font-size: var(--fs-xs); }
 .rank-row__name { font-weight: 600; font-size: var(--fs-sm); }
-.rank-row__sub { font-size: var(--fs-2xs); color: var(--paper-ink-soft); }
+.rank-row__sub { font-size: var(--fs-xs); color: var(--paper-ink-soft); }
 .rank-row__val { text-align: right; }
 
 .toggle-group {
   display: inline-flex;
   background: var(--paper-100);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   padding: 3px;
   gap: 2px;
 }
 .toggle-group button {
   padding: 6px 14px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--paper-ink-soft);
@@ -47,7 +47,7 @@
   gap: var(--sp-3);
   align-items: flex-start;
   padding: var(--sp-4);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   background: var(--gold-100);
   color: var(--gold-600);
   margin-bottom: var(--sp-5);

@@ -38,7 +38,7 @@
 
 .ledger-preview {
   background: var(--paper-000);
-  border-radius: var(--radius-lg);
+  border-radius: var(--r-lg);
   padding: var(--sp-4);
   box-shadow: var(--shadow-pop);
   max-width: 380px;
@@ -112,7 +112,7 @@
   display: flex; gap: var(--sp-2); margin-bottom: var(--sp-6);
 }
 .step-track__item {
-  flex: 1; height: 4px; border-radius: 2px; background: var(--ink-600);
+  flex: 1; height: 4px; border-radius: var(--r-sm); background: var(--ink-600);
   position: relative;
 }
 .step-track__item.is-done, .step-track__item.is-active { background: var(--gold-500); }
@@ -149,7 +149,7 @@
   display: flex; gap: 4px; margin-top: var(--sp-2);
 }
 .password-strength span {
-  height: 3px; flex: 1; border-radius: 2px; background: var(--ink-600);
+  height: 3px; flex: 1; border-radius: var(--r-sm); background: var(--ink-600);
 }
 .password-strength[data-level="1"] span:nth-child(1) { background: var(--oxblood-600); }
 .password-strength[data-level="2"] span:nth-child(-n+2) { background: var(--gold-500); }

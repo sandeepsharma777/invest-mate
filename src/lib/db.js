@@ -744,6 +744,29 @@ export const analytics = {
     const portfolioXirr = calculateXIRR(portfolioCashflows);
     const percentReturn = totals.invested > 0 ? (combinedAbsoluteReturn / totals.invested) * 100 : 0;
 
+    // Determine earliest investment date across all holdings & transactions
+    let earliestDate = null;
+    for (const h of allRows) {
+      if (h.purchase_date) {
+        if (!earliestDate || h.purchase_date < earliestDate) earliestDate = h.purchase_date;
+      }
+      const txs = Array.isArray(h.transactions) ? h.transactions : [];
+      for (const tx of txs) {
+        if (tx.date) {
+          if (!earliestDate || tx.date < earliestDate) earliestDate = tx.date;
+        }
+      }
+    }
+
+    let daysSinceEarliest = 0;
+    if (earliestDate) {
+      const t0 = new Date(earliestDate).getTime();
+      const t1 = new Date(todayISO()).getTime();
+      if (!Number.isNaN(t0) && !Number.isNaN(t1)) {
+        daysSinceEarliest = Math.max(0, Math.floor((t1 - t0) / (1000 * 60 * 60 * 24)));
+      }
+    }
+
     return {
       total_invested: round2(totals.invested),
       total_current_value: round2(totals.current),
@@ -756,6 +779,8 @@ export const analytics = {
       total_dividends: round2(totalDividends),
       total_interest: round2(totalInterest),
       holdings_count: activeRows.length,
+      earliest_date: earliestDate,
+      days_since_earliest: daysSinceEarliest,
     };
   },
 

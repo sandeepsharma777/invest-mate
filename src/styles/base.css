@@ -76,7 +76,7 @@ img, svg { display: block; max-width: 100%; }
 :focus-visible {
   outline: 2px solid var(--gold-500);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
 }
 
 /* ---- Layout shell shared by app pages (dashboard, holdings, analytics) ---- */
@@ -107,7 +107,7 @@ img, svg { display: block; max-width: 100%; }
 
 .brand__mark {
   width: 30px; height: 30px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: linear-gradient(155deg, var(--gold-500), var(--gold-600));
   display: grid; place-items: center;
   color: var(--ink-900);
@@ -139,7 +139,7 @@ img, svg { display: block; max-width: 100%; }
   gap: var(--sp-3);
   padding: 11px var(--sp-3);
   min-height: 44px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   color: var(--ink-200);
   font-size: var(--fs-sm);
   font-weight: 500;
@@ -168,7 +168,7 @@ img, svg { display: block; max-width: 100%; }
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -182,7 +182,7 @@ img, svg { display: block; max-width: 100%; }
 
 .user-chip__avatar {
   width: 32px; height: 32px;
-  border-radius: 50%;
+  border-radius: var(--r-full);
   background: var(--ink-600);
   color: var(--gold-500);
   display: grid; place-items: center;

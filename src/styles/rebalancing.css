@@ -40,7 +40,7 @@
   padding: var(--sp-5);
   background: var(--paper-000);
   border: 1px solid var(--paper-line);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   position: relative;
   min-width: 0;
   max-width: 100%;
@@ -74,7 +74,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   font-size: var(--fs-xs);
   font-weight: 700;
   text-transform: uppercase;
@@ -108,7 +108,7 @@
   padding: var(--sp-5);
   background: var(--paper-000);
   border: 1px solid var(--paper-line);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
 }
 
 .suggestions-list {
@@ -124,7 +124,7 @@
   justify-content: space-between;
   gap: var(--sp-3);
   padding: 10px 14px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: #fbf9f5;
   border: 1px dashed var(--paper-line);
   font-size: var(--fs-sm);
@@ -133,7 +133,7 @@
 .suggestion-item__icon {
   width: 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: var(--r-full);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -161,7 +161,7 @@
   color: var(--paper-ink);
 }
 .suggestion-item__sub {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--paper-ink-soft);
 }
 
@@ -231,8 +231,8 @@
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--r-full);
+  font-size: 12px;
   font-weight: 700;
   font-family: var(--font-mono);
 }
@@ -253,7 +253,7 @@
   position: relative;
   height: 20px;
   background: var(--paper-100);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   overflow: hidden;
   border: 1px solid var(--paper-line);
 }
@@ -263,7 +263,7 @@
   top: 0;
   left: 0;
   bottom: 0;
-  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
   transition: width 0.4s var(--ease-out);
   opacity: 0.85;
 }
@@ -286,13 +286,13 @@
   width: 9px;
   height: 4px;
   background: var(--paper-ink);
-  border-radius: 2px;
+  border-radius: var(--r-sm);
 }
 
 .diff-bars-labels {
   display: flex;
   justify-content: space-between;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--paper-ink-soft);
 }
 
@@ -335,7 +335,7 @@
   padding: 12px 16px;
   background: #fbf9f5;
   border: 1px solid var(--paper-line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   margin-top: var(--sp-3);
   font-weight: 700;
 }
