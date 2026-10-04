@@ -286,8 +286,10 @@ export default function Dashboard() {
                   <div className="legend" id="allocation-legend">
                     {allocation.map((row) => (
                       <div className="legend__row" key={row.asset_type}>
-                        <span className="legend__swatch" style={{ background: PALETTE[row.asset_type] || PALETTE.other }} />
-                        <span className="legend__name">{row.label}</span>
+                        <div className="legend__label">
+                          <span className="legend__swatch" style={{ background: PALETTE[row.asset_type] || PALETTE.other }} />
+                          <span className="legend__name">{row.label}</span>
+                        </div>
                         <span className="legend__pct">{row.percent}%</span>
                         <span className="legend__amt num">{formatCompact(row.value, currency)}</span>
                       </div>
@@ -359,7 +361,7 @@ export default function Dashboard() {
               </div>
 
               {/* Performers */}
-              <div className="panel">
+              <div className="panel panel--performers">
                 <div className="panel__head"><h2 className="panel__title">Best &amp; worst performers</h2></div>
                 <div id="performers-list">
                   {[...movers.gainers, ...movers.losers].length === 0 ? (
@@ -373,7 +375,7 @@ export default function Dashboard() {
                         </span>
                         <span className="perf-list__figures">
                           <ReturnBadge value={r.percent_return} />
-                          <small style={{ fontSize: "var(--fs-xs)", display: "block", marginTop: 2 }}>{formatCompact(r.absolute_return, currency)}</small>
+                          <small>{formatCompact(r.absolute_return, currency)}</small>
                         </span>
                       </div>
                     ))
@@ -385,7 +387,7 @@ export default function Dashboard() {
 
           {/* Recent holdings table */}
           <div className="panel">
-            <div className="panel__head">
+            <div className="panel__head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
                 <h2 className="panel__title">Recent holdings</h2>
                 <p className="panel__sub">Latest entries across your portfolio</p>
@@ -396,10 +398,11 @@ export default function Dashboard() {
               <table className="ledger-table" id="recent-table">
                 <thead>
                   <tr>
-                    <th>Holding</th><th>Type</th>
-                    <th className="num">Invested</th>
-                    <th className="num">Current value</th>
-                    <th className="num">Return</th>
+                    <th style={{ textAlign: "left" }}>Holding</th>
+                    <th style={{ textAlign: "left" }}>Type</th>
+                    <th className="num" style={{ textAlign: "right" }}>Invested</th>
+                    <th className="num" style={{ textAlign: "right" }}>Current value</th>
+                    <th className="num" style={{ textAlign: "right" }}>Return</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -407,17 +410,17 @@ export default function Dashboard() {
                     <tr><td colSpan="5" className="text-muted">No holdings yet.</td></tr>
                   ) : recent.map((r) => (
                     <tr key={r.id}>
-                      <td>
+                      <td style={{ textAlign: "left" }}>
                         <span className="cell-primary">{r.name}</span>
                         <span className="cell-sub">{r.identifier || r.platform || ""}</span>
                       </td>
-                      <td><Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} /></td>
-                      <td className="num">{formatCurrency(r.invested_amount, currency)}</td>
-                      <td className="num">{formatCurrency(r.current_value, currency)}</td>
-                      <td className="num">
+                      <td style={{ textAlign: "left" }}><Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} /></td>
+                      <td className="num" style={{ textAlign: "right" }}>{formatCurrency(r.invested_amount, currency)}</td>
+                      <td className="num" style={{ textAlign: "right" }}>{formatCurrency(r.current_value, currency)}</td>
+                      <td className="num" style={{ textAlign: "right" }}>
                         <ReturnBadge value={r.percent_return} />
                         {formatHoldingCagr(r) && (
-                          <div style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)", marginTop: 4 }}>
+                          <div style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)", marginTop: 4, textAlign: "right" }}>
                             {formatHoldingCagr(r)}
                           </div>
                         )}
