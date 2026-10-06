@@ -219,3 +219,66 @@ export function calculateCAGR(initialValue, finalValue, startDate, endDate) {
   if (!Number.isFinite(cagr)) return null;
   return Math.round(cagr * 100) / 100;
 }
+
+/**
+ * Prevents premature form submission on Enter in modal input fields.
+ * Instead, advances focus to the next visible, enabled input/select/textarea in DOM order.
+ * If on the last field, Enter will still not submit the form.
+ * Forms should only be submitted when the user explicitly clicks the submit button.
+ */
+export function handleFormEnterKeyNavigation(e) {
+  if (e.key !== "Enter") return;
+
+  // Let multiline textarea handle Enter naturally (inserting a newline)
+  if (e.target.tagName === "TEXTAREA") return;
+
+  // If focus is directly on a button, allow Enter to activate the button
+  if (e.target.tagName === "BUTTON") return;
+
+  // Prevent default implicit form submission
+  e.preventDefault();
+
+  const form = e.currentTarget;
+  if (!form) return;
+
+  // Query all interactive input/select/textarea fields in DOM order
+  const selector =
+    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([disabled]), select:not([disabled]), textarea:not([disabled])';
+  const allElements = Array.from(form.querySelectorAll(selector));
+
+  // Filter only visible elements
+  const visibleElements = allElements.filter((el) => {
+    return el.offsetParent !== null || el.getClientRects().length > 0;
+  });
+
+  const currentIndex = visibleElements.indexOf(e.target);
+
+  if (e.shiftKey) {
+    if (currentIndex > 0) {
+      const prevEl = visibleElements[currentIndex - 1];
+      prevEl.focus();
+      if (
+        typeof prevEl.select === "function" &&
+        prevEl.tagName === "INPUT" &&
+        !["date", "time", "checkbox", "radio", "color", "file", "range"].includes(prevEl.type)
+      ) {
+        prevEl.select();
+      }
+    }
+    return;
+  }
+
+  if (currentIndex > -1 && currentIndex < visibleElements.length - 1) {
+    const nextEl = visibleElements[currentIndex + 1];
+    nextEl.focus();
+    // For text/number inputs, also select text for quick editing
+    if (
+      typeof nextEl.select === "function" &&
+      nextEl.tagName === "INPUT" &&
+      !["date", "time", "checkbox", "radio", "color", "file", "range"].includes(nextEl.type)
+    ) {
+      nextEl.select();
+    }
+  }
+}
+

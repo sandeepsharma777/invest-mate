@@ -5,7 +5,7 @@ import { Seal } from "../components/Seal";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { investments, alerts, ASSET_TYPES } from "../lib/db";
-import { formatCurrency, formatPercent, formatDate, todayISO, debounce, getCurrencySymbol } from "../lib/utils";
+import { formatCurrency, formatPercent, formatDate, todayISO, debounce, getCurrencySymbol, handleFormEnterKeyNavigation } from "../lib/utils";
 import AlertsBanner from "../components/AlertsBanner";
 import AlertsModal from "../components/AlertsModal";
 import "../styles/holdings.css";
@@ -1001,7 +1001,7 @@ export default function Holdings() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
               </button>
             </div>
-            <form id="holding-form" onSubmit={handleSaveHolding}>
+            <form id="holding-form" onSubmit={handleSaveHolding} onKeyDown={handleFormEnterKeyNavigation}>
               <div className="modal__body">
                 {editingRow && editingRow.transactions && editingRow.transactions.length > 1 && (
                   <div style={{ background: "var(--paper-100)", border: "1px solid var(--paper-line)", padding: "10px 12px", borderRadius: "var(--radius-sm)", marginBottom: "var(--sp-4)", fontSize: "var(--fs-xs)", color: "var(--paper-ink)" }}>
@@ -1149,7 +1149,7 @@ export default function Holdings() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
               </button>
             </div>
-            <form id="sell-form" onSubmit={handleSell}>
+            <form id="sell-form" onSubmit={handleSell} onKeyDown={handleFormEnterKeyNavigation}>
               <div className="modal__body">
                 <div className="field">
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1241,7 +1241,7 @@ export default function Holdings() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
               </button>
             </div>
-            <form onSubmit={handleSaveTx}>
+            <form onSubmit={handleSaveTx} onKeyDown={handleFormEnterKeyNavigation}>
               <div className="modal__body">
                 <div className="field">
                   <label className="field__label">Action</label>
@@ -1418,7 +1418,7 @@ export default function Holdings() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
               </button>
             </div>
-            <form onSubmit={handleSaveIncome}>
+            <form onSubmit={handleSaveIncome} onKeyDown={handleFormEnterKeyNavigation}>
               <div className="modal__body">
                 <div className="field-row">
                   <div className="field">

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { analytics } from "../lib/db";
-import { formatCurrency } from "../lib/utils";
+import { formatCurrency, handleFormEnterKeyNavigation } from "../lib/utils";
 import { useToast } from "../context/ToastContext";
 import { PALETTE } from "../lib/chartConfig";
 import "../styles/rebalancing.css";
@@ -383,7 +383,7 @@ export default function RebalancingSection({ currency = "INR", onPlanUpdated }) 
               </button>
             </div>
 
-            <form onSubmit={handleSaveTarget}>
+            <form onSubmit={handleSaveTarget} onKeyDown={handleFormEnterKeyNavigation}>
               <div className="modal__body">
                 {data.items.map((it) => {
                   const val = formAllocations[it.asset_type] ?? 0;

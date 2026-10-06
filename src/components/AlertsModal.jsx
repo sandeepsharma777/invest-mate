@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { alerts, investments } from "../lib/db";
-import { formatCurrency, getCurrencySymbol } from "../lib/utils";
+import { formatCurrency, getCurrencySymbol, handleFormEnterKeyNavigation } from "../lib/utils";
 import { useToast } from "../context/ToastContext";
 import "../styles/alerts.css";
 
@@ -170,7 +170,7 @@ export default function AlertsModal({
 
         <div className="modal__body">
           {activeTab === "create" ? (
-            <form onSubmit={handleCreateAlert}>
+            <form onSubmit={handleCreateAlert} onKeyDown={handleFormEnterKeyNavigation}>
               <div className="field">
                 <label className="field__label" htmlFor="alert-holding">Holding</label>
                 <select

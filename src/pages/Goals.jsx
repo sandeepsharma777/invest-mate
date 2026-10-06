@@ -4,7 +4,7 @@ import StatCard from "../components/StatCard";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { goals } from "../lib/db";
-import { formatCurrency, formatDate, getCurrencySymbol, todayISO } from "../lib/utils";
+import { formatCurrency, formatDate, getCurrencySymbol, todayISO, handleFormEnterKeyNavigation } from "../lib/utils";
 import "../styles/goals.css";
 
 const EDIT_SVG = (
@@ -350,7 +350,7 @@ export default function Goals() {
               </button>
             </div>
 
-            <form onSubmit={handleSaveGoal}>
+            <form onSubmit={handleSaveGoal} onKeyDown={handleFormEnterKeyNavigation}>
               <div className="modal__body">
                 <div className="field">
                   <label className="field__label" htmlFor="g-name">Goal name</label>
