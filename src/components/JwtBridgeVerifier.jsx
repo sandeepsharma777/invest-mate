@@ -301,6 +301,9 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
+-- Ensure goals table has notes column
+ALTER TABLE IF EXISTS public.goals ADD COLUMN IF NOT EXISTS notes TEXT;
+
 -- 2. Drop existing RLS policies
 DROP POLICY IF EXISTS "Users can only access their own holdings" ON public.holdings;
 DROP POLICY IF EXISTS "Users can only access transactions of their holdings" ON public.transactions;

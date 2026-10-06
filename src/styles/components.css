@@ -342,20 +342,32 @@
 
 .search-field {
   position: relative;
-  flex: 1 1 220px;
+  display: block;
+  width: 100%;
   max-width: 320px;
+  height: auto;
+  flex: 0 0 auto;
 }
 .search-field svg {
-  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
-  width: 15px; height: 15px; color: var(--paper-ink-soft);
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  color: var(--paper-ink-soft);
 }
 .search-field input {
   width: 100%;
-  padding: var(--sp-2) var(--sp-2) var(--sp-2) 32px;
+  box-sizing: border-box;
+  padding: 10px 12px 10px 40px;
   border-radius: var(--r-sm);
   border: 1px solid var(--paper-line);
   background: #fff;
   font-size: var(--fs-sm);
+  color: var(--paper-ink);
+  line-height: 1.4;
 }
 
 .chip-filter {
@@ -600,12 +612,30 @@
     gap: 4px;
   }
   .table-toolbar {
+    display: flex;
     flex-direction: column;
+    gap: 12px;
     align-items: stretch;
   }
   .search-field {
-    max-width: 100%;
+    position: relative;
+    display: block;
     width: 100%;
+    max-width: 100%;
+    height: auto;
+    flex: 0 0 auto;
+    margin: 0;
+  }
+  .search-field input {
+    width: 100%;
+    box-sizing: border-box;
+    padding-left: 40px;
+    margin: 0;
+  }
+  .sort-select {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
   }
   .modal-overlay {
     padding: var(--sp-3);

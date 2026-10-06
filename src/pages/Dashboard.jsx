@@ -394,7 +394,7 @@ export default function Dashboard() {
               </div>
               <Link className="btn btn--ghost-paper btn--sm" to="/holdings">View all holdings</Link>
             </div>
-            <div className="table-scroll">
+            <div className="table-scroll table-scroll--recent">
               <table className="ledger-table" id="recent-table">
                 <thead>
                   <tr>
@@ -410,20 +410,28 @@ export default function Dashboard() {
                     <tr><td colSpan="5" className="text-muted">No holdings yet.</td></tr>
                   ) : recent.map((r) => (
                     <tr key={r.id}>
-                      <td style={{ textAlign: "left" }}>
+                      <td data-label="Holding" style={{ textAlign: "left" }}>
                         <span className="cell-primary">{r.name}</span>
                         <span className="cell-sub">{r.identifier || r.platform || ""}</span>
                       </td>
-                      <td style={{ textAlign: "left" }}><Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} /></td>
-                      <td className="num" style={{ textAlign: "right" }}>{formatCurrency(r.invested_amount, currency)}</td>
-                      <td className="num" style={{ textAlign: "right" }}>{formatCurrency(r.current_value, currency)}</td>
-                      <td className="num" style={{ textAlign: "right" }}>
-                        <ReturnBadge value={r.percent_return} />
-                        {formatHoldingCagr(r) && (
-                          <div style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)", marginTop: 4, textAlign: "right" }}>
-                            {formatHoldingCagr(r)}
-                          </div>
-                        )}
+                      <td data-label="Type" style={{ textAlign: "left" }}>
+                        <Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} />
+                      </td>
+                      <td data-label="Invested" className="num" style={{ textAlign: "right" }}>
+                        <span className="recent-cell-val">{formatCurrency(r.invested_amount, currency)}</span>
+                      </td>
+                      <td data-label="Current" className="num" style={{ textAlign: "right" }}>
+                        <span className="recent-cell-val">{formatCurrency(r.current_value, currency)}</span>
+                      </td>
+                      <td data-label="Return" className="num" style={{ textAlign: "right" }}>
+                        <div className="recent-cell-return-wrap">
+                          <ReturnBadge value={r.percent_return} />
+                          {formatHoldingCagr(r) && (
+                            <div className="recent-cagr-note" style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)", marginTop: 4, textAlign: "right" }}>
+                              {formatHoldingCagr(r)}
+                            </div>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

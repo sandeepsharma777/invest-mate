@@ -1000,6 +1000,44 @@ export const analytics = {
 
 // ── GOALS ──────────────────────────────────────────────────────────────────
 
+let _hasNotesColumn = null;
+
+async function checkHasNotesColumn() {
+  if (_hasNotesColumn !== null) return _hasNotesColumn;
+  try {
+    const { error } = await supabase.from("goals").select("notes").limit(1);
+    if (error) {
+      const msg = String(error.message || "") + String(error.details || "");
+      if (error.code === "PGRST204" || error.code === "42703" || msg.includes("notes")) {
+        _hasNotesColumn = false;
+        return false;
+      }
+    }
+    _hasNotesColumn = true;
+    return true;
+  } catch {
+    _hasNotesColumn = false;
+    return false;
+  }
+}
+
+function parseGoalNotesAndCategory(g) {
+  let notes = g.notes || "";
+  let category = g.category || "";
+  if (category && typeof category === "string" && category.startsWith("{") && category.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(category);
+      if (parsed && typeof parsed === "object") {
+        if (!notes && parsed.notes) notes = parsed.notes;
+        category = parsed.category || "";
+      }
+    } catch {}
+  } else if (!notes && category) {
+    notes = category;
+  }
+  return { notes, category };
+}
+
 export const goals = {
   async list() {
     getCurrentUserId();
@@ -1010,18 +1048,21 @@ export const goals = {
       .order("target_date", { ascending: true, nullsFirst: false });
 
     if (error) handleSupabaseError(error, "Failed to load goals");
-    return (data || []).map((g) => ({
-      id: g.id,
-      user_id: g.user_id,
-      name: g.name,
-      target_amount: Number(g.target_amount) || 0,
-      target_date: g.target_date,
-      category: g.category || "",
-      notes: g.notes || "",
-      linked_holding_ids: g.linked_holding_ids || [],
-      created_at: g.created_at,
-      updated_at: g.updated_at,
-    }));
+    return (data || []).map((g) => {
+      const { notes, category } = parseGoalNotesAndCategory(g);
+      return {
+        id: g.id,
+        user_id: g.user_id,
+        name: g.name,
+        target_amount: Number(g.target_amount) || 0,
+        target_date: g.target_date,
+        category,
+        notes,
+        linked_holding_ids: g.linked_holding_ids || [],
+        created_at: g.created_at,
+        updated_at: g.updated_at,
+      };
+    });
   },
 
   async create(payload) {
@@ -1031,22 +1072,51 @@ export const goals = {
     if (!name) throw new ApiError("VALIDATION", "Goal name is required.");
     if (!targetAmount || targetAmount <= 0) throw new ApiError("VALIDATION", "Target amount must be greater than zero.");
 
+    const notesText = payload.notes ? String(payload.notes).trim() : "";
+    const categoryText = payload.category ? String(payload.category).trim() : "";
+    const hasNotes = await checkHasNotesColumn();
+
     const row = {
       id: generateId("gol"),
       user_id: userId,
       name,
       target_amount: round2(targetAmount),
       target_date: payload.target_date || null,
-      notes: payload.notes ? String(payload.notes).trim() : "",
-      category: payload.category || "",
       linked_holding_ids: payload.linked_holding_ids || [],
       created_at: nowISO(),
       updated_at: nowISO(),
     };
 
+    if (hasNotes) {
+      row.notes = notesText;
+      row.category = categoryText;
+    } else {
+      if (notesText && categoryText) {
+        row.category = JSON.stringify({ category: categoryText, notes: notesText });
+      } else {
+        row.category = notesText || categoryText || "";
+      }
+    }
+
     const { error } = await supabase.from("goals").insert(row);
-    if (error) handleSupabaseError(error, "Failed to create goal");
-    return row;
+    if (error) {
+      const msg = String(error.message || "") + String(error.details || "");
+      if (row.notes !== undefined && (error.code === "PGRST204" || error.code === "42703" || msg.includes("notes"))) {
+        _hasNotesColumn = false;
+        delete row.notes;
+        if (!row.category) row.category = notesText;
+        const retry = await supabase.from("goals").insert(row);
+        if (retry.error) handleSupabaseError(retry.error, "Failed to create goal");
+      } else {
+        handleSupabaseError(error, "Failed to create goal");
+      }
+    }
+
+    return {
+      ...row,
+      notes: notesText,
+      category: categoryText,
+    };
   },
 
   async update(id, payload) {
@@ -1064,15 +1134,51 @@ export const goals = {
       patch.target_amount = round2(amt);
     }
     if (payload.target_date !== undefined) patch.target_date = payload.target_date || null;
-    if (payload.notes !== undefined) patch.notes = String(payload.notes || "").trim();
-    if (payload.category !== undefined) patch.category = payload.category;
     if (payload.linked_holding_ids !== undefined) patch.linked_holding_ids = payload.linked_holding_ids;
 
+    const notesText = payload.notes !== undefined ? String(payload.notes || "").trim() : undefined;
+    const categoryText = payload.category !== undefined ? String(payload.category || "").trim() : undefined;
+    const hasNotes = await checkHasNotesColumn();
+
+    if (hasNotes) {
+      if (notesText !== undefined) patch.notes = notesText;
+      if (categoryText !== undefined) patch.category = categoryText;
+    } else {
+      if (notesText !== undefined || categoryText !== undefined) {
+        const finalNotes = notesText !== undefined ? notesText : "";
+        const finalCat = categoryText !== undefined ? categoryText : "";
+        if (finalNotes && finalCat) {
+          patch.category = JSON.stringify({ category: finalCat, notes: finalNotes });
+        } else {
+          patch.category = finalNotes || finalCat || "";
+        }
+      }
+    }
+
     const { error } = await supabase.from("goals").update(patch).eq("id", id);
-    if (error) handleSupabaseError(error, "Failed to update goal");
+    if (error) {
+      const msg = String(error.message || "") + String(error.details || "");
+      if (patch.notes !== undefined && (error.code === "PGRST204" || error.code === "42703" || msg.includes("notes"))) {
+        _hasNotesColumn = false;
+        delete patch.notes;
+        if (notesText !== undefined && patch.category === undefined) {
+          patch.category = notesText;
+        }
+        const retry = await supabase.from("goals").update(patch).eq("id", id);
+        if (retry.error) handleSupabaseError(retry.error, "Failed to update goal");
+      } else {
+        handleSupabaseError(error, "Failed to update goal");
+      }
+    }
 
     const { data } = await supabase.from("goals").select("*").eq("id", id).single();
-    return data;
+    if (!data) return null;
+    const { notes, category } = parseGoalNotesAndCategory(data);
+    return {
+      ...data,
+      notes,
+      category,
+    };
   },
 
   async delete(id) {
@@ -1461,18 +1567,26 @@ export async function migrateLocalStorageToSupabase(userId) {
 
   // 2. Migrate Goals
   if (Array.isArray(db.goals)) {
+    const hasNotes = await checkHasNotesColumn();
     for (const g of db.goals) {
-      await supabase.from("goals").upsert({
+      const goalRow = {
         id: g.id || generateId("gol"),
         user_id: userId,
         name: g.name || "Untitled Goal",
         target_amount: Number(g.target_amount) || 0,
         target_date: g.target_date || null,
-        category: g.category || "",
-        notes: g.notes || "",
         created_at: g.created_at || nowISO(),
         updated_at: g.updated_at || nowISO(),
-      });
+      };
+      if (hasNotes) {
+        goalRow.notes = g.notes || "";
+        goalRow.category = g.category || "";
+      } else {
+        const n = g.notes || "";
+        const c = g.category || "";
+        goalRow.category = (n && c) ? JSON.stringify({ category: c, notes: n }) : (n || c || "");
+      }
+      await supabase.from("goals").upsert(goalRow);
       importedGoals++;
     }
   }
