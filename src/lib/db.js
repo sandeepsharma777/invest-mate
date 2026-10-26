@@ -127,11 +127,11 @@ function handleSupabaseError(error, contextMessage = "Database operation failed"
     );
   }
 
-  // Token expired / Auth failure
-  if (error.message?.includes("JWT") || error.code === "PGRST301" || error.status === 401) {
+  // Token expired / Auth failure / JWT future
+  if (error.message?.includes("JWT") || error.code === "PGRST301" || error.code === "PGRST303" || error.status === 401) {
     throw new ApiError(
       "AUTH_EXPIRED",
-      "Your session token has expired. Please refresh your token or log in again.",
+      "Your session token has expired or encountered clock skew. Please refresh or retry.",
       error
     );
   }
