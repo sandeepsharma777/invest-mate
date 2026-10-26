@@ -9,6 +9,7 @@
 .goals-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  align-items: stretch;
   gap: var(--sp-5);
   margin-top: var(--sp-4);
   min-width: 0;
@@ -67,6 +68,7 @@
 }
 
 .goal-card__figures {
+  min-height: 90px;
   background: #fbf9f5;
   border: 1px dashed var(--paper-line);
   border-radius: var(--r-md);
@@ -152,6 +154,7 @@
 
 /* Trajectory projection box */
 .goal-projection {
+  margin-top: auto;
   background: var(--paper-000);
   border: 1px solid var(--paper-line);
   border-radius: var(--r-sm);
