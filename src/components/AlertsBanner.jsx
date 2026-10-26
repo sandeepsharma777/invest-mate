@@ -18,23 +18,33 @@ export default function AlertsBanner({
           className={`alert-strip ${alert.condition === "below" ? "alert-strip--below" : ""}`}
         >
           <div className="alert-strip__content">
-            <div className="alert-strip__icon">
+            <div className="alert-strip__icon" aria-hidden="true">
               {alert.condition === "above" ? "📈" : "📉"}
             </div>
             <div className="alert-strip__msg">
-              <strong>Price Alert: </strong>
-              <strong>{alert.holding_name}</strong>
-              {alert.identifier ? ` (${alert.identifier})` : ""} has crossed{" "}
-              <strong>{alert.condition === "above" ? "above" : "below"} {formatCurrency(alert.target_price, currency)}</strong>!
-              {" "}Current price is <span className="num" style={{ fontWeight: 700 }}>{formatCurrency(alert.current_price, currency)}</span>.
-              {alert.notes && <span style={{ opacity: 0.85, marginLeft: 6 }}>({alert.notes})</span>}
+              <span className="alert-strip__title">
+                Price Alert: {alert.holding_name}
+              </span>
+              {alert.identifier ? <span className="alert-strip__id"> ({alert.identifier})</span> : null}
+              {" "}has crossed{" "}
+              <span className="alert-strip__condition">
+                {alert.condition === "above" ? "above" : "below"}{" "}
+                <span className="alert-strip__highlight">
+                  {formatCurrency(alert.target_price, currency)}
+                </span>
+              </span>
+              ! Current price is{" "}
+              <span className="alert-strip__current-price num">
+                {formatCurrency(alert.current_price, currency)}
+              </span>.
+              {alert.notes && <span className="alert-strip__notes"> ({alert.notes})</span>}
             </div>
           </div>
 
           <div className="alert-strip__actions">
             <button
               type="button"
-              className="btn btn--sm btn--ghost-paper"
+              className="alert-strip__btn-dismiss"
               onClick={() => onDismiss(alert.id)}
             >
               Dismiss
@@ -54,8 +64,8 @@ export default function AlertsBanner({
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
           <button
             type="button"
-            className="btn btn--sm btn--ghost-paper"
-            style={{ fontSize: "var(--fs-2xs)" }}
+            className="alert-strip__btn-dismiss"
+            style={{ fontSize: "var(--fs-2xs, 12px)" }}
             onClick={onDismissAll}
           >
             Dismiss all alerts ({triggeredAlerts.length})
