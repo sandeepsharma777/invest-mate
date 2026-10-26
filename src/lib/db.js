@@ -1367,6 +1367,14 @@ export const alerts = {
     const { data, error } = await query;
     if (error) handleSupabaseError(error, "Failed to load price alerts");
 
+    let dismissedIds = [];
+    try {
+      dismissedIds = JSON.parse(localStorage.getItem("investmate_dismissed_alerts") || "[]");
+    } catch {
+      // ignore
+    }
+
+    let dismissedChanged = false;
     const enriched = (data || []).map((a) => {
       const holding = a.holdings;
       const currentPrice = holding ? Number(holding.current_price) || 0 : 0;
@@ -1376,7 +1384,16 @@ export const alerts = {
       if (holding) {
         if (a.direction === "above" && currentPrice >= targetPrice) isTriggered = true;
         else if (a.direction === "below" && currentPrice <= targetPrice) isTriggered = true;
+        else isTriggered = false;
       }
+
+      // If condition is no longer triggered, clear dismissal so re-triggering later shows alert again
+      if (!isTriggered && dismissedIds.includes(a.id)) {
+        dismissedIds = dismissedIds.filter((id) => id !== a.id);
+        dismissedChanged = true;
+      }
+
+      const isDismissed = Boolean(a.dismissed || dismissedIds.includes(a.id));
 
       return {
         id: a.id,
@@ -1388,7 +1405,7 @@ export const alerts = {
         is_triggered: isTriggered,
         triggered: isTriggered,
         triggered_at: a.triggered_at,
-        dismissed: a.dismissed || false,
+        dismissed: isDismissed,
         notes: a.notes || "",
         holding_name: holding ? holding.name : "Unknown holding",
         identifier: holding ? holding.identifier : "",
@@ -1398,6 +1415,14 @@ export const alerts = {
         created_at: a.created_at,
       };
     });
+
+    if (dismissedChanged) {
+      try {
+        localStorage.setItem("investmate_dismissed_alerts", JSON.stringify(dismissedIds));
+      } catch {
+        // ignore
+      }
+    }
 
     return enriched.sort((a, b) => {
       const aActive = a.is_triggered && !a.dismissed;
