@@ -4,7 +4,7 @@ import StatCard from "../components/StatCard";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { goals } from "../lib/db";
-import { formatCurrency, formatDate, getCurrencySymbol, todayISO, handleFormEnterKeyNavigation } from "../lib/utils";
+import { formatCurrency, formatDate, getCurrencySymbol, todayISO, toInputDate, validateTargetDate, handleFormEnterKeyNavigation } from "../lib/utils";
 import "../styles/goals.css";
 
 const EDIT_SVG = (
@@ -98,7 +98,7 @@ export default function Goals() {
     setForm({
       name: goal.name,
       target_amount: goal.target_amount,
-      target_date: goal.target_date || "",
+      target_date: goal.target_date ? toInputDate(goal.target_date, "") : "",
       notes: goal.notes || "",
     });
     setModalOpen(true);
@@ -114,6 +114,13 @@ export default function Goals() {
     if (!amt || amt <= 0) {
       toast("Target amount must be greater than zero", "error");
       return;
+    }
+    if (form.target_date) {
+      const check = validateTargetDate(form.target_date);
+      if (!check.valid) {
+        toast(check.error, "error");
+        return;
+      }
     }
 
     setSaving(true);

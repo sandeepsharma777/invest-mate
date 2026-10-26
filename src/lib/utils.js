@@ -74,7 +74,133 @@ export function debounce(fn, wait = 250) {
 }
 
 export function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+/**
+ * Safely converts any date representation (YYYY-MM-DD string, ISO string, timestamp)
+ * into a valid YYYY-MM-DD string in local date format, without timezone shifting.
+ * Guards against corrupted timestamps (like max JS date / year 275760).
+ */
+export function toInputDate(val, fallback = todayISO()) {
+  if (!val) return fallback;
+  if (typeof val === "string") {
+    const match = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      const y = Number(match[1]);
+      const m = Number(match[2]);
+      const d = Number(match[3]);
+      if (y >= 1900 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        return `${match[1]}-${match[2]}-${match[3]}`;
+      }
+    }
+  }
+
+  const num = val instanceof Date ? val.getTime() : Number(val);
+  if (!Number.isNaN(num) && Number.isFinite(num)) {
+    let ms = num;
+    if (ms > 0 && ms < 1e11) {
+      ms = ms * 1000;
+    }
+    // Safeguard against extreme values (like 8640000000000000 or year 275760)
+    if (ms > 4102444800000 || ms < -62167219200000) {
+      return fallback;
+    }
+    const d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) {
+      const off = d.getTimezoneOffset();
+      const local = new Date(d.getTime() - off * 60000);
+      const y = local.getUTCFullYear();
+      if (y >= 1900 && y <= 2100) {
+        return local.toISOString().slice(0, 10);
+      }
+    }
+  }
+
+  const d = new Date(val);
+  if (Number.isNaN(d.getTime())) return fallback;
+  const year = d.getFullYear();
+  if (year < 1900 || year > 2100) return fallback;
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+/**
+ * Validates a historical/purchase date:
+ * - Must be a valid date
+ * - Must not be in the future (<= todayISO())
+ * - Year must be between minYear (default 1990) and current year
+ */
+export function validatePastDate(dateStr, minYear = 1990) {
+  if (!dateStr || typeof dateStr !== "string" || !dateStr.trim()) {
+    return { valid: false, error: "Date is required." };
+  }
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return { valid: false, error: "Please enter a valid date in YYYY-MM-DD format." };
+  }
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+
+  const currentYear = new Date().getFullYear();
+  if (y < minYear || y > currentYear) {
+    return { valid: false, error: `Year must be between ${minYear} and ${currentYear}.` };
+  }
+  if (m < 1 || m > 12) {
+    return { valid: false, error: "Invalid month." };
+  }
+  const daysInMonth = new Date(y, m, 0).getDate();
+  if (d < 1 || d > daysInMonth) {
+    return { valid: false, error: "Invalid day of month." };
+  }
+
+  const today = todayISO();
+  if (dateStr > today) {
+    return { valid: false, error: "Date cannot be in the future." };
+  }
+
+  return { valid: true, error: null };
+}
+
+/**
+ * Validates a future/target date (e.g. for Goals):
+ * - Optional: returns valid if empty
+ * - If provided, must not be in the past
+ * - Year must be between current year and maxYear (default 2100)
+ */
+export function validateTargetDate(dateStr, maxYear = 2100) {
+  if (!dateStr || typeof dateStr !== "string" || !dateStr.trim()) {
+    return { valid: true, error: null };
+  }
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return { valid: false, error: "Please enter a valid date in YYYY-MM-DD format." };
+  }
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+
+  const currentYear = new Date().getFullYear();
+  if (y < currentYear || y > maxYear) {
+    return { valid: false, error: `Year must be between ${currentYear} and ${maxYear}.` };
+  }
+  if (m < 1 || m > 12) {
+    return { valid: false, error: "Invalid month." };
+  }
+  const daysInMonth = new Date(y, m, 0).getDate();
+  if (d < 1 || d > daysInMonth) {
+    return { valid: false, error: "Invalid day of month." };
+  }
+
+  const today = todayISO();
+  if (dateStr < today) {
+    return { valid: false, error: "Target date cannot be in the past." };
+  }
+
+  return { valid: true, error: null };
 }
 
 function parseDateMs(d) {

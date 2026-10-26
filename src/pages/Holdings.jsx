@@ -5,7 +5,7 @@ import { Seal } from "../components/Seal";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { investments, alerts, ASSET_TYPES } from "../lib/db";
-import { formatCurrency, formatPercent, formatDate, todayISO, debounce, getCurrencySymbol, handleFormEnterKeyNavigation, getHoldingMetrics } from "../lib/utils";
+import { formatCurrency, formatPercent, formatDate, todayISO, toInputDate, validatePastDate, debounce, getCurrencySymbol, handleFormEnterKeyNavigation, getHoldingMetrics } from "../lib/utils";
 import AlertsBanner from "../components/AlertsBanner";
 import AlertsModal from "../components/AlertsModal";
 import "../styles/holdings.css";
@@ -130,6 +130,24 @@ export default function Holdings() {
   const [incomeForm, setIncomeForm] = useState({ type: "dividend", amount: "", date: todayISO(), notes: "" });
   const [savingIncome, setSavingIncome] = useState(false);
   const [deleteIncomeTarget, setDeleteIncomeTarget] = useState(null);
+
+  // Date validations
+  const purchaseDateValidation = useMemo(() => {
+    return validatePastDate(form.purchase_date, 1990);
+  }, [form.purchase_date]);
+  const isPurchaseDateValid = purchaseDateValidation.valid;
+
+  const sellDateValidation = useMemo(() => {
+    return validatePastDate(sellDate, 1990);
+  }, [sellDate]);
+
+  const txDateValidation = useMemo(() => {
+    return validatePastDate(txForm.date, 1990);
+  }, [txForm.date]);
+
+  const incomeDateValidation = useMemo(() => {
+    return validatePastDate(incomeForm.date, 1990);
+  }, [incomeForm.date]);
 
   // Price alerts
   const [triggeredAlerts, setTriggeredAlerts] = useState([]);
@@ -265,7 +283,7 @@ export default function Holdings() {
       quantity: String(row.quantity),
       platform: row.platform || "",
       purchase_price: String(row.purchase_price),
-      purchase_date: row.purchase_date || todayISO(),
+      purchase_date: toInputDate(row.purchase_date, todayISO()),
       current_price: String(row.current_price),
       fees_paid: String(row.fees_paid || ""),
       taxes_paid: String(row.taxes_paid || ""),
@@ -289,14 +307,25 @@ export default function Holdings() {
 
   async function handleSaveHolding(e) {
     e.preventDefault();
+    if (!purchaseDateValidation.valid) {
+      toast(purchaseDateValidation.error, "error");
+      setFieldErrors((prev) => ({ ...prev, "field-purchase-date": true }));
+      return;
+    }
     setSaving(true);
     setFieldErrors({});
     try {
       if (editingId) {
-        await investments.update(editingId, form);
+        await investments.update(editingId, {
+          ...form,
+          purchase_date: toInputDate(form.purchase_date, todayISO()),
+        });
         toast("Holding updated.", "success");
       } else {
-        await investments.create(form);
+        await investments.create({
+          ...form,
+          purchase_date: toInputDate(form.purchase_date, todayISO()),
+        });
         toast("Holding added.", "success");
       }
       setModalOpen(false);
@@ -333,10 +362,14 @@ export default function Holdings() {
 
   async function handleSell(e) {
     e.preventDefault();
+    if (!sellDateValidation.valid) {
+      toast(sellDateValidation.error, "error");
+      return;
+    }
     try {
       await investments.markSold(sellId, {
         sold_price: sellPrice,
-        sold_date: sellDate,
+        sold_date: toInputDate(sellDate, todayISO()),
         quantity: sellQuantity,
         fees: sellFees,
       });
@@ -364,8 +397,15 @@ export default function Holdings() {
   async function handleSaveTx(e) {
     e.preventDefault();
     if (!txHolding) return;
+    if (!txDateValidation.valid) {
+      toast(txDateValidation.error, "error");
+      return;
+    }
     try {
-      await investments.addTransaction(txHolding.id, txForm);
+      await investments.addTransaction(txHolding.id, {
+        ...txForm,
+        date: toInputDate(txForm.date, todayISO()),
+      });
       setTxModal(false);
       toast(`${txForm.type === "buy" ? "Buy" : "Sell"} transaction recorded.`, "success");
       refresh();
@@ -406,9 +446,16 @@ export default function Holdings() {
       toast("Please enter a valid amount greater than zero.", "error");
       return;
     }
+    if (!incomeDateValidation.valid) {
+      toast(incomeDateValidation.error, "error");
+      return;
+    }
     setSavingIncome(true);
     try {
-      await investments.addIncome(incomeHolding.id, incomeForm);
+      await investments.addIncome(incomeHolding.id, {
+        ...incomeForm,
+        date: toInputDate(incomeForm.date, todayISO()),
+      });
       toast(`${incomeForm.type === "dividend" ? "Dividend" : "Interest"} payment recorded.`, "success");
       setIncomeModal(false);
       refresh();
@@ -1079,11 +1126,23 @@ export default function Holdings() {
                     </div>
                     <p className="field__error">Enter a valid purchase price.</p>
                   </div>
-                  <div className={`field${fieldErrors["field-purchase-date"] ? " has-error" : ""}`} id="field-purchase-date">
+                  <div className={`field${fieldErrors["field-purchase-date"] || (!isPurchaseDateValid && form.purchase_date) ? " has-error" : ""}`} id="field-purchase-date">
                     <label className="field__label" htmlFor="f-purchase-date">Purchase date</label>
-                    <input className="input" type="date" id="f-purchase-date"
-                      value={form.purchase_date} onChange={(e) => setFormField("purchase_date", e.target.value)} />
-                    <p className="field__error">Purchase date is required.</p>
+                    <input
+                      className="input"
+                      type="date"
+                      id="f-purchase-date"
+                      min="1990-01-01"
+                      max={todayISO()}
+                      value={form.purchase_date}
+                      onChange={(e) => setFormField("purchase_date", e.target.value)}
+                      required
+                    />
+                    {!isPurchaseDateValid ? (
+                      <p className="field__error" style={{ display: "block" }}>{purchaseDateValidation.error}</p>
+                    ) : (
+                      <p className="field__error">Purchase date is required.</p>
+                    )}
                   </div>
                 </div>
 
@@ -1128,7 +1187,7 @@ export default function Holdings() {
               </div>
               <div className="modal__foot">
                 <button type="button" className="btn btn--ghost-paper" onClick={() => setModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn btn--primary" disabled={saving}>
+                <button type="submit" className="btn btn--primary" disabled={saving || !isPurchaseDateValid}>
                   {saving ? "Saving…" : editingId ? "Save changes" : "Save investment"}
                 </button>
               </div>

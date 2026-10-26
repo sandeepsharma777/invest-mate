@@ -6,9 +6,9 @@
 
 import { supabase } from "./supabase.js";
 import { auth as firebaseAuth } from "./firebase.js";
-import { calculateXIRR, calculateCAGR, getHoldingMetrics } from "./utils.js";
+import { calculateXIRR, calculateCAGR, getHoldingMetrics, todayISO, toInputDate, validatePastDate, validateTargetDate } from "./utils.js";
 
-export { getHoldingMetrics };
+export { getHoldingMetrics, todayISO, toInputDate, validatePastDate, validateTargetDate };
 
 export const ASSET_TYPES = {
   stocks: {
@@ -94,9 +94,6 @@ function nowISO() {
   return new Date().toISOString();
 }
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function round2(n) {
   return Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
@@ -157,7 +154,7 @@ function mapTransactionFromDb(tx) {
   return {
     id: tx.id,
     type: tx.type,
-    date: tx.date,
+    date: toInputDate(tx.date, todayISO()),
     quantity: Number(tx.quantity) || 0,
     pricePerUnit: Number(tx.price_per_unit) || 0,
     fees: Number(tx.fees) || 0,
@@ -171,7 +168,7 @@ function mapIncomeFromDb(inc) {
   return {
     id: inc.id,
     type: inc.type,
-    date: inc.date,
+    date: toInputDate(inc.date, todayISO()),
     amount: Number(inc.amount) || 0,
     reinvested: Boolean(inc.reinvested),
     notes: inc.notes || "",
@@ -197,14 +194,14 @@ function mapHoldingFromDb(row) {
     unit: row.unit || ASSET_TYPES[row.asset_type]?.unitLabel || "units",
     quantity: Number(row.quantity) || 0,
     purchase_price: Number(row.purchase_price) || 0,
-    purchase_date: row.purchase_date,
+    purchase_date: toInputDate(row.purchase_date, todayISO()),
     current_price: Number(row.current_price) || 0,
     fees_paid: Number(row.fees_paid) || 0,
     taxes_paid: Number(row.taxes_paid) || 0,
     platform: row.platform || "",
     status: row.status || "active",
     sold_price: row.sold_price != null ? Number(row.sold_price) : null,
-    sold_date: row.sold_date || null,
+    sold_date: row.sold_date ? toInputDate(row.sold_date, null) : null,
     notes: row.notes || "",
     type_fields: row.type_fields || {},
     transactions: txs,
@@ -229,6 +226,8 @@ function validateHoldingPayload(p, partial = false) {
   }
   if (!partial || p.purchase_date !== undefined) {
     if (!p.purchase_date) throw new ApiError("VALIDATION", "Purchase date is required.");
+    const dateCheck = validatePastDate(toInputDate(p.purchase_date, ""), 1990);
+    if (!dateCheck.valid) throw new ApiError("VALIDATION", dateCheck.error);
   }
 }
 
@@ -443,6 +442,7 @@ export const investments = {
     const taxesPaid = Number(payload.taxes_paid) || 0;
     const qty = Number(payload.quantity);
     const purchasePrice = Number(payload.purchase_price);
+    const cleanPurchaseDate = toInputDate(payload.purchase_date, todayISO());
 
     const holdingRow = {
       id: holdingId,
@@ -453,7 +453,7 @@ export const investments = {
       unit: ASSET_TYPES[payload.asset_type]?.unitLabel || "units",
       quantity: qty,
       purchase_price: purchasePrice,
-      purchase_date: payload.purchase_date || todayISO(),
+      purchase_date: cleanPurchaseDate,
       fees_paid: feesPaid,
       taxes_paid: taxesPaid,
       current_price: payload.current_price !== "" && payload.current_price != null ? Number(payload.current_price) : purchasePrice,
@@ -478,7 +478,7 @@ export const investments = {
       id: txId,
       holding_id: holdingId,
       type: "buy",
-      date: payload.purchase_date || todayISO(),
+      date: cleanPurchaseDate,
       quantity: qty,
       price_per_unit: purchasePrice,
       fees: feesPaid + taxesPaid,
@@ -519,7 +519,7 @@ export const investments = {
     }
     if (payload.fees_paid !== undefined) patch.fees_paid = Number(payload.fees_paid) || 0;
     if (payload.taxes_paid !== undefined) patch.taxes_paid = Number(payload.taxes_paid) || 0;
-    if (payload.purchase_date !== undefined) patch.purchase_date = payload.purchase_date;
+    if (payload.purchase_date !== undefined) patch.purchase_date = toInputDate(payload.purchase_date, todayISO());
 
     // If holding only has 1 buy transaction, update that transaction as well
     if (holding.transactions?.length === 1 && holding.transactions[0].type === "buy") {
@@ -534,7 +534,7 @@ export const investments = {
         patch.purchase_price = Number(payload.purchase_price);
       }
       if (payload.purchase_date != null) {
-        txPatch.date = payload.purchase_date;
+        txPatch.date = toInputDate(payload.purchase_date, todayISO());
       }
       if (payload.fees_paid != null || payload.taxes_paid != null) {
         txPatch.fees = (Number(payload.fees_paid != null ? payload.fees_paid : holding.fees_paid) || 0) +
@@ -579,6 +579,10 @@ export const investments = {
       }
     }
 
+    const cleanDate = toInputDate(txData.date, todayISO());
+    const dateCheck = validatePastDate(cleanDate, 1990);
+    if (!dateCheck.valid) throw new ApiError("VALIDATION", dateCheck.error);
+
     const txId = generateId("tx");
     const { error: txErr } = await supabase
       .from("transactions")
@@ -586,7 +590,7 @@ export const investments = {
         id: txId,
         holding_id: id,
         type: txData.type,
-        date: txData.date,
+        date: cleanDate,
         quantity: qty,
         price_per_unit: price,
         fees: fees,
@@ -603,7 +607,7 @@ export const investments = {
     };
     if (txData.type === "sell") {
       patch.sold_price = price;
-      patch.sold_date = txData.date;
+      patch.sold_date = cleanDate;
     }
 
     await supabase.from("holdings").update(patch).eq("id", id);
@@ -661,6 +665,10 @@ export const investments = {
       throw new ApiError("VALIDATION", "Income amount must be greater than zero.");
     }
 
+    const cleanDate = toInputDate(date, todayISO());
+    const dateCheck = validatePastDate(cleanDate, 1990);
+    if (!dateCheck.valid) throw new ApiError("VALIDATION", dateCheck.error);
+
     const incomeId = generateId("inc");
     const { error: incErr } = await supabase
       .from("income_records")
@@ -668,7 +676,7 @@ export const investments = {
         id: incomeId,
         holding_id: id,
         type,
-        date: date || todayISO(),
+        date: cleanDate,
         amount: round2(amt),
         reinvested: false,
         notes: notes ? String(notes).trim() : "",
@@ -1098,7 +1106,7 @@ export const goals = {
         user_id: g.user_id,
         name: g.name,
         target_amount: Number(g.target_amount) || 0,
-        target_date: g.target_date,
+        target_date: g.target_date ? toInputDate(g.target_date, null) : null,
         category,
         notes,
         linked_holding_ids: g.linked_holding_ids || [],
@@ -1115,6 +1123,13 @@ export const goals = {
     if (!name) throw new ApiError("VALIDATION", "Goal name is required.");
     if (!targetAmount || targetAmount <= 0) throw new ApiError("VALIDATION", "Target amount must be greater than zero.");
 
+    let cleanTargetDate = null;
+    if (payload.target_date) {
+      cleanTargetDate = toInputDate(payload.target_date, null);
+      const dateCheck = validateTargetDate(cleanTargetDate);
+      if (!dateCheck.valid) throw new ApiError("VALIDATION", dateCheck.error);
+    }
+
     const notesText = payload.notes ? String(payload.notes).trim() : "";
     const categoryText = payload.category ? String(payload.category).trim() : "";
     const hasNotes = await checkHasNotesColumn();
@@ -1124,7 +1139,7 @@ export const goals = {
       user_id: userId,
       name,
       target_amount: round2(targetAmount),
-      target_date: payload.target_date || null,
+      target_date: cleanTargetDate,
       linked_holding_ids: payload.linked_holding_ids || [],
       created_at: nowISO(),
       updated_at: nowISO(),
@@ -1176,7 +1191,16 @@ export const goals = {
       if (!amt || amt <= 0) throw new ApiError("VALIDATION", "Target amount must be greater than zero.");
       patch.target_amount = round2(amt);
     }
-    if (payload.target_date !== undefined) patch.target_date = payload.target_date || null;
+    if (payload.target_date !== undefined) {
+      if (payload.target_date) {
+        const cleanTargetDate = toInputDate(payload.target_date, null);
+        const dateCheck = validateTargetDate(cleanTargetDate);
+        if (!dateCheck.valid) throw new ApiError("VALIDATION", dateCheck.error);
+        patch.target_date = cleanTargetDate;
+      } else {
+        patch.target_date = null;
+      }
+    }
     if (payload.linked_holding_ids !== undefined) patch.linked_holding_ids = payload.linked_holding_ids;
 
     const notesText = payload.notes !== undefined ? String(payload.notes || "").trim() : undefined;
