@@ -74,6 +74,8 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
 }
 
 .goal-figure {
@@ -82,6 +84,7 @@
 }
 .goal-figure--target {
   text-align: right;
+  margin-left: auto;
 }
 
 .goal-figure__label {
@@ -94,7 +97,8 @@
 }
 
 .goal-figure__val {
-  font-size: var(--fs-lg);
+  font-size: clamp(0.95rem, 1.4vw, var(--fs-lg));
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-weight: 600;
   color: var(--paper-ink);

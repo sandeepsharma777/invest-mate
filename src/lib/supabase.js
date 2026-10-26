@@ -19,7 +19,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
   global: {
     headers: async () => {
-      const token = await getFirebaseIdToken(true);
+      const token = await getFirebaseIdToken(false);
       if (token) {
         return {
           Authorization: `Bearer ${token}`,
@@ -29,7 +29,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     },
   },
   accessToken: async () => {
-    const token = await getFirebaseIdToken(true);
+    const token = await getFirebaseIdToken(false);
     return token || null;
   },
 });

@@ -6,10 +6,7 @@ export default function StatCard({ label, value, sub, delta, deltaPositive, badg
   return (
     <div className="ledger-card stat-card">
       <span className="stat-card__label">{label}</span>
-      <span
-        className="stat-card__value num"
-        style={{ whiteSpace: "nowrap", fontSize: "clamp(1.25rem, 2vw, 1.75rem)" }}
-      >
+      <span className="stat-card__value num">
         {value}
       </span>
       {badge ? (
