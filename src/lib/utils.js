@@ -221,6 +221,51 @@ export function calculateCAGR(initialValue, finalValue, startDate, endDate) {
 }
 
 /**
+ * Shared holding metrics calculator across Dashboard, Holdings, Analytics, and Performers panel.
+ * Always guarantees:
+ *   gain = currentValue - invested
+ *   returnPct = invested > 0 ? (gain / invested) * 100 : 0
+ *
+ * @param {object} holding
+ * @returns {{ invested: number, currentValue: number, gain: number, returnPct: number }}
+ */
+export function getHoldingMetrics(holding) {
+  if (!holding) {
+    return { invested: 0, currentValue: 0, gain: 0, returnPct: 0 };
+  }
+
+  let invested = 0;
+  let currentValue = 0;
+
+  if (holding.invested_amount !== undefined && holding.current_value !== undefined) {
+    invested = Number(holding.invested_amount) || 0;
+    currentValue = Number(holding.current_value) || 0;
+  } else {
+    const qty = Number(holding.quantity) || 0;
+    const pPrice = Number(holding.purchase_price) || 0;
+    const cPrice = Number(
+      holding.status === "sold" && holding.sold_price != null
+        ? holding.sold_price
+        : holding.current_price != null && holding.current_price !== ""
+        ? holding.current_price
+        : pPrice
+    );
+    invested = qty * pPrice;
+    currentValue = qty * cPrice;
+  }
+
+  const gain = Math.round((currentValue - invested) * 100) / 100;
+  const returnPct = invested > 0 ? Math.round(((gain / invested) * 100) * 100) / 100 : 0;
+
+  return {
+    invested: Math.round(invested * 100) / 100,
+    currentValue: Math.round(currentValue * 100) / 100,
+    gain,
+    returnPct,
+  };
+}
+
+/**
  * Prevents premature form submission on Enter in modal input fields.
  * Instead, advances focus to the next visible, enabled input/select/textarea in DOM order.
  * If on the last field, Enter will still not submit the form.

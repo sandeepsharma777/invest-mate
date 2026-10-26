@@ -7,7 +7,7 @@ import { AllocationDonut } from "../components/Charts";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { analytics, investments, goals, alerts, ASSET_TYPES } from "../lib/db";
-import { formatCurrency, formatCompact, formatDate, todayISO } from "../lib/utils";
+import { formatCurrency, formatCompact, formatDate, todayISO, getHoldingMetrics } from "../lib/utils";
 import { PALETTE } from "../lib/chartConfig";
 import AlertsBanner from "../components/AlertsBanner";
 import AlertsModal from "../components/AlertsModal";
@@ -367,18 +367,21 @@ export default function Dashboard() {
                   {[...movers.gainers, ...movers.losers].length === 0 ? (
                     <p className="text-muted" style={{ color: "var(--paper-ink-soft)" }}>Not enough data yet.</p>
                   ) : (
-                    [...movers.gainers, ...movers.losers].map((r) => (
-                      <div className="perf-list__row" key={r.id}>
-                        <span className="perf-list__name">
-                          <span className={`seal seal--${r.asset_type}`}><i className="seal__dot" /></span>
-                          {r.name}
-                        </span>
-                        <span className="perf-list__figures">
-                          <ReturnBadge value={r.percent_return} />
-                          <small>{formatCompact(r.absolute_return, currency)}</small>
-                        </span>
-                      </div>
-                    ))
+                    [...movers.gainers, ...movers.losers].map((r) => {
+                      const m = getHoldingMetrics(r);
+                      return (
+                        <div className="perf-list__row" key={r.id}>
+                          <span className="perf-list__name">
+                            <span className={`seal seal--${r.asset_type}`}><i className="seal__dot" /></span>
+                            {r.name}
+                          </span>
+                          <span className="perf-list__figures">
+                            <ReturnBadge value={m.returnPct} />
+                            <small>{formatCompact(m.gain, currency)}</small>
+                          </span>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -408,33 +411,36 @@ export default function Dashboard() {
                 <tbody>
                   {recent.length === 0 ? (
                     <tr><td colSpan="5" className="text-muted">No holdings yet.</td></tr>
-                  ) : recent.map((r) => (
-                    <tr key={r.id}>
-                      <td data-label="Holding" style={{ textAlign: "left" }}>
-                        <span className="cell-primary">{r.name}</span>
-                        <span className="cell-sub">{r.identifier || r.platform || ""}</span>
-                      </td>
-                      <td data-label="Type" style={{ textAlign: "left" }}>
-                        <Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} />
-                      </td>
-                      <td data-label="Invested" className="num" style={{ textAlign: "right" }}>
-                        <span className="recent-cell-val">{formatCurrency(r.invested_amount, currency)}</span>
-                      </td>
-                      <td data-label="Current" className="num" style={{ textAlign: "right" }}>
-                        <span className="recent-cell-val">{formatCurrency(r.current_value, currency)}</span>
-                      </td>
-                      <td data-label="Return" className="num" style={{ textAlign: "right" }}>
-                        <div className="recent-cell-return-wrap">
-                          <ReturnBadge value={r.percent_return} />
-                          {formatHoldingCagr(r) && (
-                            <div className="recent-cagr-note" style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)", marginTop: 4, textAlign: "right" }}>
-                              {formatHoldingCagr(r)}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  ) : recent.map((r) => {
+                    const m = getHoldingMetrics(r);
+                    return (
+                      <tr key={r.id}>
+                        <td data-label="Holding" style={{ textAlign: "left" }}>
+                          <span className="cell-primary">{r.name}</span>
+                          <span className="cell-sub">{r.identifier || r.platform || ""}</span>
+                        </td>
+                        <td data-label="Type" style={{ textAlign: "left" }}>
+                          <Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} />
+                        </td>
+                        <td data-label="Invested" className="num" style={{ textAlign: "right" }}>
+                          <span className="recent-cell-val">{formatCurrency(m.invested, currency)}</span>
+                        </td>
+                        <td data-label="Current" className="num" style={{ textAlign: "right" }}>
+                          <span className="recent-cell-val">{formatCurrency(m.currentValue, currency)}</span>
+                        </td>
+                        <td data-label="Return" className="num" style={{ textAlign: "right" }}>
+                          <div className="recent-cell-return-wrap">
+                            <ReturnBadge value={m.returnPct} />
+                            {formatHoldingCagr(r) && (
+                              <div className="recent-cagr-note" style={{ fontSize: "var(--fs-xs)", color: "var(--paper-ink-soft)", marginTop: 4, textAlign: "right" }}>
+                                {formatHoldingCagr(r)}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

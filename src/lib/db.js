@@ -6,7 +6,9 @@
 
 import { supabase } from "./supabase.js";
 import { auth as firebaseAuth } from "./firebase.js";
-import { calculateXIRR, calculateCAGR } from "./utils.js";
+import { calculateXIRR, calculateCAGR, getHoldingMetrics } from "./utils.js";
+
+export { getHoldingMetrics };
 
 export const ASSET_TYPES = {
   stocks: {
@@ -275,9 +277,25 @@ export function computeHoldingMetrics(row) {
     }
   }
 
+  if (txs.length === 0 && Number(row.quantity) > 0) {
+    currentQty = Number(row.quantity) || 0;
+    const pPrice = Number(row.purchase_price) || 0;
+    const fPaid = Number(row.fees_paid) || 0;
+    totalFees = fPaid;
+    totalBuyQty = currentQty;
+    totalBuyCost = (currentQty * pPrice) + fPaid;
+    currentAvgCost = currentQty > 0 ? totalBuyCost / currentQty : pPrice;
+  }
+
   const isSold = totalBuyQty > 0 && currentQty === 0;
   const status = isSold ? "sold" : (row.status === "sold" && currentQty === 0 ? "sold" : "active");
-  const effectivePrice = Number(row.current_price != null && row.current_price !== "" ? row.current_price : currentAvgCost);
+  const effectivePrice = Number(
+    status === "sold" && row.sold_price != null
+      ? row.sold_price
+      : row.current_price != null && row.current_price !== ""
+      ? row.current_price
+      : currentAvgCost
+  );
   const investedAmount = currentQty > 0 ? (currentQty * currentAvgCost) : 0;
   const currentValue = currentQty * effectivePrice;
 
@@ -295,12 +313,13 @@ export function computeHoldingMetrics(row) {
     else if (inc.type === "interest") totalInterest += amt;
   }
 
-  // Absolute return is unrealized return + realized gains + income received
-  const unrealizedReturn = currentValue - investedAmount;
-  const absoluteReturn = unrealizedReturn + totalRealizedPnl + totalIncome;
-
-  const costBasisForReturn = totalBuyCost > 0 ? totalBuyCost : investedAmount;
-  const percentReturn = costBasisForReturn > 0 ? (absoluteReturn / costBasisForReturn) * 100 : 0;
+  // Consistent per-holding gain and return percentage:
+  // For active positions: gain is unrealized capital gain on current holding (currentValue - investedAmount).
+  // For closed positions: gain is total realized P&L.
+  const gain = status === "sold" ? totalRealizedPnl : (currentValue - investedAmount);
+  const baseCost = status === "sold" ? totalBuyCost : investedAmount;
+  const percentReturn = baseCost > 0 ? (gain / baseCost) * 100 : 0;
+  const absoluteReturn = gain;
 
   // Build cashflows for XIRR
   const cashflows = [];
@@ -345,6 +364,8 @@ export function computeHoldingMetrics(row) {
     purchase_price: round2(currentAvgCost),
     invested_amount: round2(investedAmount),
     current_value: round2(currentValue),
+    gain: round2(gain),
+    return_pct: round2(percentReturn),
     fees_paid: round2(totalFees),
     taxes_paid: Number(row.taxes_paid) || 0,
     realized_gain: round2(totalRealizedPnl),
@@ -690,21 +711,23 @@ export const analytics = {
     const allRows = await investments.list();
     const activeRows = allRows.filter((r) => r.status === "active");
 
-    const totals = activeRows.reduce(
-      (acc, r) => {
-        acc.invested += r.invested_amount;
-        acc.current += r.current_value;
-        return acc;
-      },
-      { invested: 0, current: 0 }
-    );
+    let totalInvested = 0;
+    let totalCurrentValue = 0;
+
+    for (const r of activeRows) {
+      const m = getHoldingMetrics(r);
+      totalInvested += m.invested;
+      totalCurrentValue += m.currentValue;
+    }
+
+    totalInvested = round2(totalInvested);
+    totalCurrentValue = round2(totalCurrentValue);
 
     let totalFees = 0;
     let totalTaxes = 0;
     let totalIncome = 0;
     let totalDividends = 0;
     let totalInterest = 0;
-    let combinedAbsoluteReturn = 0;
 
     for (const hm of allRows) {
       totalFees += hm.fees_paid || 0;
@@ -712,8 +735,11 @@ export const analytics = {
       totalIncome += hm.total_income || 0;
       totalDividends += hm.total_dividends || 0;
       totalInterest += hm.total_interest || 0;
-      combinedAbsoluteReturn += hm.absolute_return || 0;
     }
+
+    totalIncome = round2(totalIncome);
+    totalDividends = round2(totalDividends);
+    totalInterest = round2(totalInterest);
 
     // Build portfolio cashflows across all holdings
     const portfolioCashflows = [];
@@ -737,12 +763,16 @@ export const analytics = {
         }
       }
     }
-    if (totals.current > 0) {
-      portfolioCashflows.push({ amount: totals.current, date: todayISO() });
+    if (totalCurrentValue > 0) {
+      portfolioCashflows.push({ amount: totalCurrentValue, date: todayISO() });
     }
 
     const portfolioXirr = calculateXIRR(portfolioCashflows);
-    const percentReturn = totals.invested > 0 ? (combinedAbsoluteReturn / totals.invested) * 100 : 0;
+
+    // Absolute return = Total portfolio value − Total invested + dividends/interest
+    const absoluteReturn = round2(totalCurrentValue - totalInvested + totalIncome);
+    // % = Absolute return ÷ Total invested, using the same total invested shown on the card
+    const percentReturn = totalInvested > 0 ? round2((absoluteReturn / totalInvested) * 100) : 0;
 
     // Determine earliest investment date across all holdings & transactions
     let earliestDate = null;
@@ -768,16 +798,16 @@ export const analytics = {
     }
 
     return {
-      total_invested: round2(totals.invested),
-      total_current_value: round2(totals.current),
-      absolute_return: round2(combinedAbsoluteReturn),
-      percent_return: round2(percentReturn),
+      total_invested: totalInvested,
+      total_current_value: totalCurrentValue,
+      absolute_return: absoluteReturn,
+      percent_return: percentReturn,
       portfolio_xirr: portfolioXirr != null ? round2(portfolioXirr) : null,
       total_fees: round2(totalFees),
       total_taxes: round2(totalTaxes),
-      total_income: round2(totalIncome),
-      total_dividends: round2(totalDividends),
-      total_interest: round2(totalInterest),
+      total_income: totalIncome,
+      total_dividends: totalDividends,
+      total_interest: totalInterest,
       holdings_count: activeRows.length,
       earliest_date: earliestDate,
       days_since_earliest: daysSinceEarliest,
@@ -788,7 +818,8 @@ export const analytics = {
     const rows = await investments.list({ status: "active" });
     const byType = {};
     rows.forEach((r) => {
-      byType[r.asset_type] = (byType[r.asset_type] || 0) + r.current_value;
+      const m = getHoldingMetrics(r);
+      byType[r.asset_type] = (byType[r.asset_type] || 0) + m.currentValue;
     });
     const total = Object.values(byType).reduce((a, b) => a + b, 0);
     return Object.entries(byType)
@@ -808,24 +839,35 @@ export const analytics = {
       if (!byType[r.asset_type]) {
         byType[r.asset_type] = { asset_type: r.asset_type, label: ASSET_TYPES[r.asset_type]?.label || r.asset_type, invested: 0, current: 0 };
       }
-      byType[r.asset_type].invested += r.invested_amount;
-      byType[r.asset_type].current += r.current_value;
+      const m = getHoldingMetrics(r);
+      byType[r.asset_type].invested += m.invested;
+      byType[r.asset_type].current += m.currentValue;
     });
-    return Object.values(byType).map((t) => ({
-      ...t,
-      invested: round2(t.invested),
-      current: round2(t.current),
-      absolute_return: round2(t.current - t.invested),
-      percent_return: t.invested > 0 ? round2(((t.current - t.invested) / t.invested) * 100) : 0,
-    }));
+    return Object.values(byType).map((t) => {
+      const invested = round2(t.invested);
+      const current = round2(t.current);
+      const gain = round2(current - invested);
+      const percentReturn = invested > 0 ? round2((gain / invested) * 100) : 0;
+      return {
+        ...t,
+        invested,
+        current,
+        absolute_return: gain,
+        percent_return: percentReturn,
+      };
+    });
   },
 
   async getTopMovers(limit = 5) {
     const rows = await investments.list({ status: "active" });
-    const sorted = [...rows].sort((a, b) => b.percent_return - a.percent_return);
+    const sorted = [...rows].sort((a, b) => {
+      const ma = getHoldingMetrics(a);
+      const mb = getHoldingMetrics(b);
+      return mb.returnPct - ma.returnPct;
+    });
     return {
-      gainers: sorted.filter((r) => r.percent_return > 0).slice(0, limit),
-      losers: sorted.filter((r) => r.percent_return < 0).slice(-limit).reverse(),
+      gainers: sorted.filter((r) => getHoldingMetrics(r).returnPct > 0).slice(0, limit),
+      losers: sorted.filter((r) => getHoldingMetrics(r).returnPct < 0).slice(-limit).reverse(),
     };
   },
 
@@ -915,8 +957,9 @@ export const analytics = {
     const currentByAsset = {};
     let totalPortfolioValue = 0;
     for (const r of rows) {
-      currentByAsset[r.asset_type] = (currentByAsset[r.asset_type] || 0) + (r.current_value || 0);
-      totalPortfolioValue += (r.current_value || 0);
+      const m = getHoldingMetrics(r);
+      currentByAsset[r.asset_type] = (currentByAsset[r.asset_type] || 0) + m.currentValue;
+      totalPortfolioValue += m.currentValue;
     }
 
     const allAssetTypes = Array.from(new Set([...Object.keys(targetMap), ...Object.keys(currentByAsset)]));
@@ -1194,7 +1237,7 @@ export const goals = {
 
     let totalPortfolioValue = 0;
     for (const h of allHoldings) {
-      totalPortfolioValue += h.current_value;
+      totalPortfolioValue += getHoldingMetrics(h).currentValue;
     }
 
     const enrichedGoals = userGoals.map((g) => {

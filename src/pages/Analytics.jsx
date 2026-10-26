@@ -8,7 +8,7 @@ import RebalancingSection from "../components/RebalancingSection";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { analytics, investments, ASSET_TYPES } from "../lib/db";
-import { formatCurrency, formatPercent } from "../lib/utils";
+import { formatCurrency, formatPercent, getHoldingMetrics } from "../lib/utils";
 import "../styles/analytics.css";
 
 export default function Analytics() {
@@ -70,26 +70,29 @@ export default function Analytics() {
   const isGain = (summary?.absolute_return ?? 0) >= 0;
 
   // Table rows sorted by percent_return desc
-  const sortedRows = [...allRows].sort((a, b) => b.percent_return - a.percent_return);
+  const sortedRows = [...allRows].sort((a, b) => getHoldingMetrics(b).returnPct - getHoldingMetrics(a).returnPct);
 
   function renderMovers(rows, isGainer) {
     if (!rows.length) {
       return <p style={{ color: "var(--paper-ink-soft)", fontSize: "var(--fs-sm)" }}>No {isGainer ? "gainers" : "losers"} yet.</p>;
     }
-    return rows.map((r, i) => (
-      <div className="rank-row" key={r.id}>
-        <span className="rank-row__idx">{i + 1}</span>
-        <span>
-          <span className="rank-row__name">{r.name}</span>
-          <span className="rank-row__sub">{ASSET_TYPES[r.asset_type]?.label || r.asset_type}</span>
-        </span>
-        <span className="rank-row__val">
-          <span className={`num ${r.percent_return >= 0 ? "text-positive" : "text-negative"}`}>
-            {formatPercent(r.percent_return)}
+    return rows.map((r, i) => {
+      const m = getHoldingMetrics(r);
+      return (
+        <div className="rank-row" key={r.id}>
+          <span className="rank-row__idx">{i + 1}</span>
+          <span>
+            <span className="rank-row__name">{r.name}</span>
+            <span className="rank-row__sub">{ASSET_TYPES[r.asset_type]?.label || r.asset_type}</span>
           </span>
-        </span>
-      </div>
-    ));
+          <span className="rank-row__val">
+            <span className={`num ${m.returnPct >= 0 ? "text-positive" : "text-negative"}`}>
+              {formatPercent(m.returnPct)}
+            </span>
+          </span>
+        </div>
+      );
+    });
   }
 
   return (
@@ -203,25 +206,28 @@ export default function Analytics() {
             <tbody>
               {sortedRows.length === 0 ? (
                 <tr><td colSpan="8" className="text-muted">No active holdings.</td></tr>
-              ) : sortedRows.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    <span className="cell-primary">{r.name}</span>
-                    <span className="cell-sub">{r.identifier || ""}</span>
-                  </td>
-                  <td><Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} /></td>
-                  <td className="num">{formatCurrency(r.invested_amount, currency)}</td>
-                  <td className="num">{formatCurrency(r.current_value, currency)}</td>
-                  <td className={`num ${r.absolute_return >= 0 ? "text-positive" : "text-negative"}`}>{formatCurrency(r.absolute_return, currency)}</td>
-                  <td className={`num ${r.percent_return >= 0 ? "text-positive" : "text-negative"}`}>{formatPercent(r.percent_return)}</td>
-                  <td className={`num ${r.xirr != null && r.xirr >= 0 ? "text-positive" : r.xirr != null ? "text-negative" : "text-muted"}`}>
-                    {r.xirr != null ? `${formatPercent(r.xirr)} p.a.` : "—"}
-                  </td>
-                  <td className={`num ${r.cagr != null && r.cagr >= 0 ? "text-positive" : r.cagr != null ? "text-negative" : "text-muted"}`}>
-                    {r.cagr != null ? `${formatPercent(r.cagr)} p.a.` : "—"}
-                  </td>
-                </tr>
-              ))}
+              ) : sortedRows.map((r) => {
+                const m = getHoldingMetrics(r);
+                return (
+                  <tr key={r.id}>
+                    <td>
+                      <span className="cell-primary">{r.name}</span>
+                      <span className="cell-sub">{r.identifier || ""}</span>
+                    </td>
+                    <td><Seal assetType={r.asset_type} ASSET_TYPES={ASSET_TYPES} /></td>
+                    <td className="num">{formatCurrency(m.invested, currency)}</td>
+                    <td className="num">{formatCurrency(m.currentValue, currency)}</td>
+                    <td className={`num ${m.gain >= 0 ? "text-positive" : "text-negative"}`}>{formatCurrency(m.gain, currency)}</td>
+                    <td className={`num ${m.returnPct >= 0 ? "text-positive" : "text-negative"}`}>{formatPercent(m.returnPct)}</td>
+                    <td className={`num ${r.xirr != null && r.xirr >= 0 ? "text-positive" : r.xirr != null ? "text-negative" : "text-muted"}`}>
+                      {r.xirr != null ? `${formatPercent(r.xirr)} p.a.` : "—"}
+                    </td>
+                    <td className={`num ${r.cagr != null && r.cagr >= 0 ? "text-positive" : r.cagr != null ? "text-negative" : "text-muted"}`}>
+                      {r.cagr != null ? `${formatPercent(r.cagr)} p.a.` : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

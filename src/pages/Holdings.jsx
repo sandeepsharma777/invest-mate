@@ -5,7 +5,7 @@ import { Seal } from "../components/Seal";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { investments, alerts, ASSET_TYPES } from "../lib/db";
-import { formatCurrency, formatPercent, formatDate, todayISO, debounce, getCurrencySymbol, handleFormEnterKeyNavigation } from "../lib/utils";
+import { formatCurrency, formatPercent, formatDate, todayISO, debounce, getCurrencySymbol, handleFormEnterKeyNavigation, getHoldingMetrics } from "../lib/utils";
 import AlertsBanner from "../components/AlertsBanner";
 import AlertsModal from "../components/AlertsModal";
 import "../styles/holdings.css";
@@ -231,9 +231,9 @@ export default function Holdings() {
   function applySort(rows) {
     const s = [...rows];
     switch (sort) {
-      case "value-desc":  return s.sort((a, b) => b.current_value - a.current_value);
-      case "return-desc": return s.sort((a, b) => b.percent_return - a.percent_return);
-      case "return-asc":  return s.sort((a, b) => a.percent_return - b.percent_return);
+      case "value-desc":  return s.sort((a, b) => getHoldingMetrics(b).currentValue - getHoldingMetrics(a).currentValue);
+      case "return-desc": return s.sort((a, b) => getHoldingMetrics(b).returnPct - getHoldingMetrics(a).returnPct);
+      case "return-asc":  return s.sort((a, b) => getHoldingMetrics(a).returnPct - getHoldingMetrics(b).returnPct);
       case "name":        return s.sort((a, b) => a.name.localeCompare(b.name));
       default:            return s.sort((a, b) => b.created_at.localeCompare(a.created_at));
     }
@@ -545,6 +545,7 @@ export default function Holdings() {
               </thead>
               <tbody>
                 {displayRows.map((r) => {
+                  const m = getHoldingMetrics(r);
                   const isExpanded = expandedIds.has(r.id);
                   const txCount = r.transactions?.length || 0;
                   return (
@@ -599,15 +600,15 @@ export default function Holdings() {
                         <td className="num">{r.quantity} <span style={{ fontSize: "var(--fs-2xs)", color: "var(--paper-ink-soft)" }}>{r.unit}</span></td>
                         <td className="num">{formatCurrency(r.purchase_price, currency)}</td>
                         <td className="num">{formatCurrency(r.status === "sold" && r.sold_price != null ? r.sold_price : r.current_price, currency)}</td>
-                        <td className="num">{formatCurrency(r.invested_amount, currency)}</td>
-                        <td className="num">{formatCurrency(r.current_value, currency)}</td>
-                        <td className={`num ${r.absolute_return >= 0 ? "text-positive" : "text-negative"}`}>
-                          <div>{formatPercent(r.percent_return)} <span style={{ fontSize: "var(--fs-2xs)", color: "var(--paper-ink-soft)" }}>abs</span></div>
+                        <td className="num">{formatCurrency(m.invested, currency)}</td>
+                        <td className="num">{formatCurrency(m.currentValue, currency)}</td>
+                        <td className={`num ${m.gain >= 0 ? "text-positive" : "text-negative"}`}>
+                          <div>{formatPercent(m.returnPct)} <span style={{ fontSize: "var(--fs-2xs)", color: "var(--paper-ink-soft)" }}>abs</span></div>
                           <div style={{ fontSize: "var(--fs-2xs)", fontWeight: 600 }}>
                             {r.xirr != null ? `${formatPercent(r.xirr)} XIRR` : (r.cagr != null ? `${formatPercent(r.cagr)} CAGR` : "")}
                           </div>
-                          <div className="cell-sub" style={{ margin: 0, color: r.absolute_return >= 0 ? "var(--jade-600)" : "var(--oxblood-600)" }}>
-                            {formatCurrency(r.absolute_return, currency)}
+                          <div className="cell-sub" style={{ margin: 0, color: m.gain >= 0 ? "var(--jade-600)" : "var(--oxblood-600)" }}>
+                            {formatCurrency(m.gain, currency)}
                           </div>
                         </td>
                         <td>
@@ -787,7 +788,7 @@ export default function Holdings() {
                               </div>
 
                               <div style={{ display: "flex", gap: "var(--sp-4)", flexWrap: "wrap", padding: "8px 12px", background: "#fcfbfa", border: "1px dashed var(--paper-line)", borderRadius: "var(--radius-sm)", marginBottom: "var(--sp-3)", fontSize: "var(--fs-xs)" }}>
-                                <span><strong>Absolute return:</strong> <span className={r.absolute_return >= 0 ? "text-positive" : "text-negative"}>{formatPercent(r.percent_return)} ({formatCurrency(r.absolute_return, currency)})</span></span>
+                                <span><strong>Absolute return:</strong> <span className={m.gain >= 0 ? "text-positive" : "text-negative"}>{formatPercent(m.returnPct)} ({formatCurrency(m.gain, currency)})</span></span>
                                 <span><strong>XIRR:</strong> <span className={r.xirr != null && r.xirr >= 0 ? "text-positive" : r.xirr != null ? "text-negative" : "text-muted"}>{r.xirr != null ? `${formatPercent(r.xirr)} p.a.` : "—"}</span></span>
                                 {r.cagr != null && (
                                   <span><strong>CAGR:</strong> <span className={r.cagr >= 0 ? "text-positive" : "text-negative"}>{formatPercent(r.cagr)} p.a.</span></span>
